@@ -64,13 +64,13 @@ To start a new chat, call the `newChat()` method. This creates a new Chat instan
 let chat = GeminiApp.newChat();
 ```
 
-### Add Messages
+### Add Contents
 
-You can add messages to your chat using the `addMessage()` method. Messages can be from the user or the system.
+You can add messages to your chat using the `addContent()` method. Messages can be from the user or the system.
 
 ```javascript
-chat.addMessage("Hello, how are you?");
-chat.addMessage("Answer to the user in a professional way.", true);
+chat.addContent("Hello, how are you?");
+chat.addContent("Answer to the user in a professional way.", true);
 ```
 
 ### Add callable Function
@@ -103,48 +103,54 @@ let response = chat.run();
 ### Example 1 : Send a prompt and get completion
 
 ```javascript
- GeminiApp.init(VERTEX_AI_LOCATION_ID, PROJECT_ID);
+function example1() {
+  GeminiApp.init("us-central1", "my-project-id");
 
- const chat = GeminiApp.newChat();
- chat.addMessage("What are the steps to add an external library to my Google Apps Script project?");
+  const chat = GeminiApp.newChat();
+  chat.addContent("What are the steps to add an external library to my Google Apps Script project?");
 
- const chatAnswer = chat.run();
- Logger.log(chatAnswer);
+  const chatAnswer = chat.run();
+  Logger.log(chatAnswer);
+}
 ```
 
 ### Example 2 : Ask Gemini to create a draft reply for the last email in Gmail inbox
 
 ```javascript
- GeminiApp.init(VERTEX_AI_LOCATION_ID, PROJECT_ID);
- const chat = GeminiApp.newChat();
+function example2() {
+  GeminiApp.init("us-central1", "my-project-id");
 
- var getLatestThreadFunction = GeminiApp.newFunction()
+  var getLatestThreadFunction = GeminiApp.newFunction()
     .setName("getLatestThread")
-    .setDescription("Retrieve information from the last message received.");
+    .setDescription("Retrieve information from the last email message received.");
 
- var createDraftResponseFunction = GeminiApp.newFunction()
+  var createDraftResponseFunction = GeminiApp.newFunction()
     .setName("createDraftResponse")
     .setDescription("Create a draft response.")
     .addParameter("threadId", "STRING", "the ID of the thread to retrieve")
     .addParameter("body", "STRING", "the body of the email in plain text");
 
   var resp = GeminiApp.newChat()
-    .addMessage("You are an assistant managing my Gmail inbox.", true)
-    .addMessage("Retrieve the latest message I received and draft a response.")
+    .addContent("Retrieve the latest message thread I received. Create a draft response to the message to reply to the threadId")
     .addFunction(getLatestThreadFunction)
     .addFunction(createDraftResponseFunction)
     .run();
 
-  console.log(resp);
+  Logger.log(resp);
+}
 ```
 
 ### Example 3 : Retrieve structured data instead of raw text with onlyReturnArgument()
 
 ```javascript
+function example3() {
+  GeminiApp.init(GeminiApp.init("us-central1", "my-project-id"));
+
   const ticket = "Hello, could you check the status of my subscription under customer@example.com";
 
-  chat.addMessage("You just received this ticket : " + ticket);
-  chat.addMessage("What's the customer email address ? You will give it to me using the function getEmailAddress.");
+  const chat = GeminiApp.newChat();
+  chat.addContent(`You just received this ticket :  ${ticket}
+                   What's the customer email address ? You will give it to me using the function getEmailAddress.`);
 
   const myFunction = GeminiApp.newFunction() // in this example, getEmailAddress is not actually a real function in your script
     .setName("getEmailAddress")
@@ -158,6 +164,7 @@ let response = chat.run();
   Logger.log(chatAnswer["emailAddress"]); // the name of the parameter of your "fake" function
 
   // output : 	"customer@example.com"
+}
 ```
 
 
