@@ -2,6 +2,9 @@
 
 The GeminiApp is a library that allows integration to Google's Gemini API in your Google Apps Script projects. It allows for structured conversation and function calling.
 
+> **Acknowledgement** - this library is based on [ChatGPTApp](https://github.com/scriptit-fr/ChatGPTApp) by Guillemine Allavena and Romain Vialard at [Scriptit](https://www.scriptit.fr/).
+
+
 ## Table of Contents
 
 ###### How to use : 
