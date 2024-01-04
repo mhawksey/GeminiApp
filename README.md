@@ -1,6 +1,6 @@
 # GeminiApp Google Apps Script Library Documentation
 
-The GeminiApp is a library that allows integration to Google's Gemini AI API in your Google Apps Script projects. It allows for structured conversation and function calling.
+The GeminiApp is a library that allows integration to Google's Gemini API in your Google Apps Script projects. It allows for structured conversation and function calling.
 
 ## Table of Contents
 
@@ -10,7 +10,6 @@ The GeminiApp is a library that allows integration to Google's Gemini AI API in 
 * [Create a New Chat](#create-a-new-chat)
 * [Add Messages](#add-messages)
 * [Add Callable Functions](#add-callable-function)
-* [Enable web browsing (optional)](#enable-web-browsing-optional)
 * [Run the Chat](#run-the-chat)
 
 ###### Examples :
@@ -18,7 +17,7 @@ The GeminiApp is a library that allows integration to Google's Gemini AI API in 
  * [Send a prompt and get completion](#example-1--send-a-prompt-and-get-completion)
  * [Ask Gemini to create a draft reply for the last email in Gmail inbox](#example-2--ask-gemini-to-create-a-draft-reply-for-the-last-email-in-gmail-inbox)
  * [Retrieve structured data instead of raw text with onlyReturnArgument()](#example-3--retrieve-structured-data-instead-of-raw-text-with-onlyreturnargument)
- * [Use web browsing](#example-4--use-web-browsing)
+
 ###### Reference :
 
  * [Function Class](#function-object)
