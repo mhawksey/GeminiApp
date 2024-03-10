@@ -1,6 +1,5 @@
 /*
  GeminiApp
- https://github.com/mhawksey/GeminiApp/
 
  Copyright (c) 2023 Martin Hawksey
 
@@ -38,6 +37,8 @@
 const GeminiApp = (function () {
   let PROJECT_ID = "";
   let REGION = "";
+  let MODEL_VERSION = "gemini-1.0-pro";
+  let MODEL_VISION_VERSION = "gemini-1.0-pro-vision"
   let verbose = true;
 
   /**
@@ -182,7 +183,8 @@ const GeminiApp = (function () {
    */
   class Chat {
     constructor() {
-      let contents = [];
+      let parts = [];
+      let vision = false;
       let functions = [];
       let payload = {};
       let temperature = 0.9;
@@ -193,20 +195,34 @@ const GeminiApp = (function () {
       /**
        * Add a content to the chat.
        * @param {string} textPrompt - The content to be added.
-       * @param {boolean} [model] - OPTIONAL - True if content from model, False for user. 
        * @returns {Chat} - The current Chat instance.
        */
-      this.addContent = function (textPrompt, model) {
-        let role = "user";
-        if (model) {
-          role = "model";
-        }
-        contents.push({
-          role: role,
-          parts: [{ text: textPrompt }]
-        });
+      this.addContent = function (textPrompt) {
+        parts.push({ "text": textPrompt });
         return this;
       };
+
+      /**
+       * Add a Google Drive file to the chat.
+       * @param {string} textPrompt - The content to be added.
+       * @param {DriveApp.File} file - The image or video to be added.
+       * @returns {Chat} - The current Chat instance.
+       */
+      this.addDriveData = function (file) {
+
+        const blob = file.getBlob()
+        const base64 = Utilities.base64Encode(blob.getBytes());
+        const mimeType = blob.getContentType();
+        vision = true;
+
+        parts.push({
+          "inlineData": {
+            "mimeType": mimeType,
+            "data": base64
+          }
+        });
+        return this;
+      }
 
       /**
        * Add a function to the chat.
@@ -266,6 +282,17 @@ const GeminiApp = (function () {
         if (!(REGION || PROJECT_ID)) {
           throw Error("Please set your Vertex AI project and region using GeminiApp.init(location, project)");
         }
+
+        if(vision && functions.length){
+          throw Error(`Function Calling is not supported in ${MODEL_VISION_VERSION}`);
+        }
+
+        let model = MODEL_VERSION;
+        if (vision){
+          model = MODEL_VISION_VERSION;
+          max_output_tokens = 2048;
+        } 
+
         if (advancedParametersObject) {
           if (advancedParametersObject.temperature) {
             temperature = advancedParametersObject.temperature;
@@ -281,7 +308,7 @@ const GeminiApp = (function () {
           "maxOutputTokens": max_output_tokens,
           "stopSequences": sequences
         }
-        payload.contents = contents;
+        payload.contents = [{"role": "user", "parts": parts}];
 
         let functionCalling = false;
 
@@ -311,7 +338,7 @@ const GeminiApp = (function () {
             'payload': JSON.stringify(payload),
             'muteHttpExceptions': true
           };
-          let response = UrlFetchApp.fetch(`https://${REGION}-aiplatform.googleapis.com/v1/projects/${PROJECT_ID}/locations/${REGION}/publishers/google/models/gemini-pro:streamGenerateContent`, options);
+          let response = UrlFetchApp.fetch(`https://${REGION}-aiplatform.googleapis.com/v1/projects/${PROJECT_ID}/locations/${REGION}/publishers/google/models/${model}:streamGenerateContent`, options);
           let responseCode = response.getResponseCode();
 
           if (responseCode === 200) {
@@ -320,8 +347,11 @@ const GeminiApp = (function () {
             responseMessage = parsedResponse[0].candidates[0];
             responseParts = responseMessage.content.parts;
             finish_reason = responseMessage.finishReason;
-            if (finish_reason == "MAX_TOKENS") {
+            if (finish_reason === "MAX_TOKENS") {
               console.warn(`Gemini response has been troncated because it was too long. To resolve this issue, you can increase the max_output_tokens property. max_output_tokens: ${max_output_tokens}, prompt_tokens: ${parsedResponse[0].usageMetadata.promptTokenCount}, completion_tokens: ${parsedResponse[0].usageMetadata.totalTokenCount}`);
+            } else if (finish_reason === "SAFETY") {
+              console.error(`Gemini response has been blocked because for safety. ${JSON.stringify(responseMessage.safetyRatings)}`);
+              break;
             }
             success = true;
           }
@@ -482,7 +512,8 @@ const GeminiApp = (function () {
 
     /**
      * Mandatory
-     * @param {string} apiKey - Your Gemini API key.
+     * @param {string} location - Your Gemini Project Location.
+     * @param {string} project - Your Google Cloud Project with Gemini.
      */
     init: function (location, project) {
       REGION = location;
