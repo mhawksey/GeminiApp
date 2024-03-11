@@ -1,35 +1,45 @@
 // Here is where you define your Google Cloud Project details. Use Google Cloud IAM settings to add additional testers 
 var process = {
     env: {
-      'PROJECT_ID': 'your-cloud-project-id',
-      'VERTEX_AI_LOCATION_ID': 'us-central1',
+        'PROJECT_ID': 'your-cloud-project-id',
+        'VERTEX_AI_LOCATION_ID': 'us-central1',
     }
-  }
+}
 
 /**
- * Orchestrates the sending of personalized coding tips via email using Gemini and Apps Script functions.
- *
- * @function sendCodingTipsByEmailGemini
+ * Add menu option
  */
-function sendCodingTipsByEmailGemini() {
+function onOpen() {
+    var ui = SpreadsheetApp.getUi();
+    ui.createMenu('GeminiApp')
+        .addItem('Create Drafts', 'draftCodingTipsByEmail')
+        .addToUi();
+}
+
+/**
+ * Orchestrates the drafting a personalized tips using Gemini and Apps Script functions.
+ *
+ * @function draftCodingTipsByEmailGemini
+ */
+function draftCodingTipsByEmail() {
     GeminiApp.init(process.env.VERTEX_AI_LOCATION_ID, process.env.PROJECT_ID);
 
     var getContactList = GeminiApp.newFunction()
         .setName("getContactList")
-        .setDescription("Retrieve a list of contacts, including their name, email address and tip topic from the values in a 2D Array format with a header in row 1");
+        .setDescription("Retrieve a contact list as a 2D data array. The contact list including one row per person with their name, email address, company and tip topic. The header row defines the different columns of data.");
 
-    var sendMessageFunction = GeminiApp.newFunction()
-        .setName("sendMessage")
-        .setDescription("Send an email to a list of contacts")
+    var draftMessageFunction = GeminiApp.newFunction()
+        .setName("draftMessage")
+        .setDescription("Draft an email to a contact")
         .addParameter("recipientEmail", "STRING", "The email address of the recipient")
         .addParameter("subject", "STRING", "The email subject")
         .addParameter("body", "STRING", "The email body in Markdown format (e.g. CommonMark or GitHub Flavored Markdown (GFM))");
 
     var resp = GeminiApp.newChat()
-        .addContent(`Send a useful personalised Google Apps Script coding tip for each of my contacts using the suggested tip topic from my Google Sheet data. You must provide responses to sendMessage until there are no email addresses left in the Google Sheet data. The tip message must be over 400 words`)
+        .addContent('Send a useful personalised tip for each of my contacts using the suggested topic in my contact list. You must provide responses to draftMessage until there are no email addresses left in the contact list. The tip message must be over 500 words. Each tip email must be different')
         .addFunction(getContactList)
-        .addFunction(sendMessageFunction)
-        .run({ temperature: 0.4 });
+        .addFunction(draftMessageFunction)
+        .run({ temperature: 0.1 });
 
     console.log(resp.content.parts[0].text);
 }
@@ -57,17 +67,17 @@ function getContactList() {
  *   - status: {string} Either 'ok' for success or 'error' for failure.
  *   - text: {string} A message confirming delivery or indicating an error.
  */
-function sendMessage(recipientEmail, subject, body) {
+function draftMessage(recipientEmail, subject, body) {
     try {
-        const htmlBody = markdownToHTML(body);
-        MailApp.sendEmail(recipientEmail, subject, body, {
+        const htmlBody = markdownToHTML_(body);
+        GmailApp.createDraft(recipientEmail, subject, body, {
             htmlBody: htmlBody
         });
         console.log(`sendMessage: Email sent to ${recipientEmail}`);
-        return { status: 'ok', text: `sendMessage: Email sent to ${recipientEmail}` };
+        return { status: 'ok', text: `draftMessage: Email drafted for ${recipientEmail}` };
     } catch (e) {
         console.error(e)
-        return { status: 'error', text: `sendMessage: Error sending email sent to ${recipientEmail}` };
+        return { status: 'error', text: `draftMessage: Error drafting email for ${recipientEmail}` };
     }
 }
 
@@ -78,8 +88,9 @@ function sendMessage(recipientEmail, subject, body) {
  * @param {string} text - The Markdown text to be converted.
  * @returns {string} The converted HTML text.
  */
-function markdownToHTML(text) {
+function markdownToHTML_(text) {
+    text = text.split(/\\\n/).join('\n');
+    text = text.split(/\\n/).join('\n').replace(/\\"/g, '"').replace(/\\/g, "");
     const converter = new showdown.Converter();
-    text = text.replace(/\\"/g, '"').split('\\n').join('\n');
     return converter.makeHtml(text);
 }

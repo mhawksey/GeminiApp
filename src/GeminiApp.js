@@ -34,6 +34,7 @@
  See the License for the specific language governing permissions and
  limitations under the License.
  */
+
 const GeminiApp = (function () {
   let PROJECT_ID = "";
   let REGION = "";
@@ -183,6 +184,7 @@ const GeminiApp = (function () {
    */
   class Chat {
     constructor() {
+      let contents = [];
       let parts = [];
       let vision = false;
       let functions = [];
@@ -195,10 +197,18 @@ const GeminiApp = (function () {
       /**
        * Add a content to the chat.
        * @param {string} textPrompt - The content to be added.
+       * @param {boolean} [model] - OPTIONAL - True if content from model, False for user. 
        * @returns {Chat} - The current Chat instance.
        */
-      this.addContent = function (textPrompt) {
-        parts.push({ "text": textPrompt });
+      this.addContent = function (textPrompt, model) {
+        let role = "user";
+        if (model) {
+          role = "model";
+        }
+        contents.push({
+          role: role,
+          parts: [{ text: textPrompt }]
+        });
         return this;
       };
 
@@ -206,20 +216,29 @@ const GeminiApp = (function () {
        * Add a Google Drive file to the chat.
        * @param {string} textPrompt - The content to be added.
        * @param {DriveApp.File} file - The image or video to be added.
+       * @param {boolean} [model] - OPTIONAL - True if content from model, False for user. 
        * @returns {Chat} - The current Chat instance.
        */
-      this.addDriveData = function (file) {
+      this.addDriveData = function (textPrompt, file, model) {
+
+        let role = "user";
+        if (model) {
+          role = "model";
+        }
 
         const blob = file.getBlob()
         const base64 = Utilities.base64Encode(blob.getBytes());
         const mimeType = blob.getContentType();
         vision = true;
 
-        parts.push({
-          "inlineData": {
-            "mimeType": mimeType,
-            "data": base64
-          }
+        contents.push({
+          role: role,
+          parts: [{ text: textPrompt }, {
+            "inlineData": {
+              "mimeType": mimeType,
+              "data": base64
+            }
+          }]
         });
         return this;
       }
@@ -283,15 +302,15 @@ const GeminiApp = (function () {
           throw Error("Please set your Vertex AI project and region using GeminiApp.init(location, project)");
         }
 
-        if(vision && functions.length){
+        if (vision && functions.length) {
           throw Error(`Function Calling is not supported in ${MODEL_VISION_VERSION}`);
         }
 
         let model = MODEL_VERSION;
-        if (vision){
+        if (vision) {
           model = MODEL_VISION_VERSION;
           max_output_tokens = 2048;
-        } 
+        }
 
         if (advancedParametersObject) {
           if (advancedParametersObject.temperature) {
@@ -308,7 +327,8 @@ const GeminiApp = (function () {
           "maxOutputTokens": max_output_tokens,
           "stopSequences": sequences
         }
-        payload.contents = [{"role": "user", "parts": parts}];
+        //payload.contents = [{"role": "user", "parts": parts}];
+        payload.contents = contents;
 
         let functionCalling = false;
 
