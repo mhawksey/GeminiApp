@@ -31,10 +31,12 @@ The GeminiApp is a library that allows integration to Google's Gemini API in you
 
 ## How to use
 
-> **Important:** Vertex AI Gemini API is currently in public preview and is subject to change. Latest product information in included on the [Vertex AI Gemini API documentation page](https://cloud.google.com/vertex-ai/docs/generative-ai/model-reference/gemini).
+> **Important:** This library is designed for the Vertex AI Gemini 1.0 Pro API. Latest product information in included on the [Vertex AI Gemini API documentation page](https://cloud.google.com/vertex-ai/docs/generative-ai/model-reference/gemini).
 
 
 ### Setup
+
+#### Option 1 - Cloud Platform project
 
 1. [Select or create a Cloud Platform project](https://console.cloud.google.com/project).
 1. [Enable the Vertex AI API](https://console.cloud.google.com/flows/enableapi?apiid=aiplatform.googleapis.com).
@@ -58,6 +60,15 @@ The GeminiApp is a library that allows integration to Google's Gemini API in you
 ```javascript
 GeminiApp.init("us-central1", "my-project-id");
 ```
+#### Option 2 - Google AI Studio API Key
+> **Important** Google AI Studio is currently available in 180+ countries, check out the [documentation to learn more](https://ai.google.dev/available_regions). Google AI Studio must only be used for prototyping with generative models 
+
+1. [Get an API Key](https://ai.google.dev/tutorials/setup).
+
+1. Add the [GeminiApp library](src/GeminiApp.js) to your project as a new script file.
+
+1. In your main script file you can initialize the GeminiApp library by calling the `GeminiApp.initWithKey(key)`
+
 
 ### Create a New Chat
 
@@ -74,6 +85,15 @@ You can add messages to your chat using the `addContent()` method. Messages can 
 ```javascript
 chat.addContent("Hello, how are you?");
 chat.addContent("Answer to the user in a professional way.", true);
+```
+
+### Add a Google Drive image/video
+
+You can add a multimodal message with an image or video from Google Drive using the `addDriveData()` method.
+
+```javascript
+const file = DriveApp.getFileById('YOUR_IMAGE_VIDEO_FILE_ID');
+chat.addDriveData("Describe this image: ", file);
 ```
 
 ### Add callable Function
@@ -220,7 +240,8 @@ Supported attributes for the advanced parameters :
 ```javascript
 advancedParametersObject = {
 	temperature: number,
-    max_output_tokens: integer
+    max_output_tokens: integer,
+    safetySettings: object
 }
 ```
 

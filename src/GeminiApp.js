@@ -35,9 +35,10 @@
  limitations under the License.
  */
 
-const GeminiApp = (function () {
+ const GeminiApp = (function () {
   let PROJECT_ID = "";
   let REGION = "";
+  let API_KEY = false;
   let MODEL_VERSION = "gemini-1.0-pro";
   let MODEL_VISION_VERSION = "gemini-1.0-pro-vision"
   let verbose = true;
@@ -185,14 +186,14 @@ const GeminiApp = (function () {
   class Chat {
     constructor() {
       let contents = [];
-      let parts = [];
       let vision = false;
       let functions = [];
       let payload = {};
-      let temperature = 0.9;
+      let temperature = 0.4;
       let sequences = [];
       let candidates = 1;
       let max_output_tokens = 8192;
+      let safetySettings = {};
 
       /**
        * Add a content to the chat.
@@ -294,16 +295,21 @@ const GeminiApp = (function () {
        * Sends all your messages and eventual function to chat GPT.
        * Will return the last chat answer.
        * If a function calling model is used, will call several functions until the chat decides that nothing is left to do.
-       * @param {{temperature?: number, max_output_tokens?: number}} [advancedParametersObject] - OPTIONAL - For more advanced settings and specific usage only. {temperature, max_output_tokens}
+       * @param {{temperature?: number, max_output_tokens?: number, safetySettings?: object}} [advancedParametersObject] - OPTIONAL - For more advanced settings and specific usage only. {temperature, max_output_tokens, safetySettings}
        * @returns {object} - the last message of the chat 
        */
       this.run = function (advancedParametersObject) {
-        if (!(REGION || PROJECT_ID)) {
+
+        if (!(REGION || PROJECT_ID) && !API_KEY) {
           throw Error("Please set your Vertex AI project and region using GeminiApp.init(location, project)");
         }
 
+        if ((!REGION && !PROJECT_ID) && !API_KEY) {
+          throw Error("Please set your Google AI Studio key using GeminiApp.initWithKey(apiKey)");
+        }
+
         if (vision && functions.length) {
-          throw Error(`Function Calling is not supported in ${MODEL_VISION_VERSION}`);
+          throw Error(`Function Calling is not currently supported in ${MODEL_VISION_VERSION}`);
         }
 
         let model = MODEL_VERSION;
@@ -319,6 +325,9 @@ const GeminiApp = (function () {
           if (advancedParametersObject.max_output_tokens) {
             max_output_tokens = advancedParametersObject.max_output_tokens;
           }
+          if (advancedParametersObject.safetySettings){
+            payload.safetySettings = advancedParametersObject.safetySettings
+          }
         }
 
         payload.generationConfig = {
@@ -327,7 +336,7 @@ const GeminiApp = (function () {
           "maxOutputTokens": max_output_tokens,
           "stopSequences": sequences
         }
-        //payload.contents = [{"role": "user", "parts": parts}];
+
         payload.contents = contents;
 
         let functionCalling = false;
@@ -348,23 +357,32 @@ const GeminiApp = (function () {
         let maxRetries = 5;
         let retries = 0;
         let success = false;
+        
+        let url = '';
+        let options = {
+          'method': 'POST',
+          'contentType': 'application/json',
+          'muteHttpExceptions': true,
+          'payload': JSON.stringify(payload)
+        };
+
+        if (REGION && PROJECT_ID){
+          options.headers = { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() };
+          url = `https://${REGION}-aiplatform.googleapis.com/v1/projects/${PROJECT_ID}/locations/${REGION}/publishers/google/models/${model}:streamGenerateContent`
+        } else if (API_KEY){
+          url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${API_KEY}`
+        }
 
         let responseMessage, responseParts, functionObj, finish_reason;
         while (retries < maxRetries && !success) {
-          let options = {
-            'method': 'POST',
-            'headers': { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() },
-            'contentType': 'application/json',
-            'payload': JSON.stringify(payload),
-            'muteHttpExceptions': true
-          };
-          let response = UrlFetchApp.fetch(`https://${REGION}-aiplatform.googleapis.com/v1/projects/${PROJECT_ID}/locations/${REGION}/publishers/google/models/${model}:streamGenerateContent`, options);
+
+          let response = UrlFetchApp.fetch(url, options);
           let responseCode = response.getResponseCode();
 
           if (responseCode === 200) {
             // The request was successful, exit the loop.
             const parsedResponse = JSON.parse(response.getContentText());
-            responseMessage = parsedResponse[0].candidates[0];
+            responseMessage = (parsedResponse.candidates) ? parsedResponse.candidates[0] : parsedResponse[0].candidates[0];
             responseParts = responseMessage.content.parts;
             finish_reason = responseMessage.finishReason;
             if (finish_reason === "MAX_TOKENS") {
@@ -531,13 +549,20 @@ const GeminiApp = (function () {
     },
 
     /**
-     * Mandatory
+     * Initialise with Google Cloud project
      * @param {string} location - Your Gemini Project Location.
      * @param {string} project - Your Google Cloud Project with Gemini.
      */
     init: function (location, project) {
       REGION = location;
       PROJECT_ID = project
+    },
+    /**
+     * Initialise with Google AI Studio Key
+     * @param {string} apiKey - Google AI Studio Key.
+     */
+    initWithKey: function (apiKey) {
+      API_KEY = apiKey;
     }
   }
 })();

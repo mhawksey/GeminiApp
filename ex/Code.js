@@ -52,7 +52,6 @@ function draftCodingTipsByEmail() {
  */
 function getContactList() {
     const data = SpreadsheetApp.getActiveSpreadsheet().getSheets()[0].getDataRange().getValues();
-    console.log(JSON.stringify({ values: data }))
     return { values: data }
 }
 
@@ -73,7 +72,7 @@ function draftMessage(recipientEmail, subject, body) {
         GmailApp.createDraft(recipientEmail, subject, body, {
             htmlBody: htmlBody
         });
-        console.log(`sendMessage: Email sent to ${recipientEmail}`);
+        console.log(`draftMessage: Email drafted for ${recipientEmail}`);
         return { status: 'ok', text: `draftMessage: Email drafted for ${recipientEmail}` };
     } catch (e) {
         console.error(e)
