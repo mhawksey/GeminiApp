@@ -9,9 +9,9 @@ The GeminiApp is a library that allows integration to Google's Gemini API in you
 * [Setup](#setup)
 * [Implement Common Use Cases](#implement-common-use-cases)
   * [Generate text from text-only input](#generate-text-from-text-only-input)
-  * [Generate text from text-and-image input (multimodal)](#generate-text-from-text-and-image-input-(multimodal))
-  * [Build multi-turn conversations (chat)](#build-multi-turn-conversations-(chat))
-  * [Build multi-turn conversations (chat) with function calling](#build-multi-turn-conversations-(chat)-with-function-calling)
+  * [Generate text from text-and-image input (multimodal)](#generate-text-from-text-and-image-input-multimodal)
+  * [Build multi-turn conversations (chat)](#build-multi-turn-conversations-chat)
+  * [Build multi-turn conversations (chat) with function calling](#build-multi-turn-conversations-chat-with-function-calling)
 * [Options to control content generation](#options-to-control-content-generation)
 * [Function Calling with GeminiApp](#function-calling-with-geminiapp)
 
