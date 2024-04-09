@@ -1,30 +1,40 @@
 # GeminiApp Google Apps Script Library Documentation
 
-The GeminiApp is a library that allows integration to Google's Gemini API in your Google Apps Script projects. It allows for muti-modal prompts, structured conversation and function calling.
+The GeminiApp is a library that allows integration to Google's Gemini API in your Google Apps Script projects. It allows for mutli-modal prompts, structured conversation and function calling.
 
-> **Acknowledgement** - this library is based on [ChatGPTApp](https://github.com/scriptit-fr/ChatGPTApp) by Guillemine Allavena and Romain Vialard at [Scriptit](https://www.scriptit.fr/) and [Google AI JavaScript SDK](https://github.com/google/generative-ai-js/) by Google
+> **Acknowledgement** - this library is based on [ChatGPTApp](https://github.com/scriptit-fr/ChatGPTApp) by Guillemine Allavena and Romain Vialard at [Scriptit](https://www.scriptit.fr/) and the [Google AI JavaScript SDK](https://github.com/google/generative-ai-js/) by Google.
 
 ## Table of Contents
 
 * [Setup](#setup)
 * [Implement Common Use Cases](#implement-common-use-cases)
+  * [Generate text from text-only input](#generate-text-from-text-only-input)
+  * [Generate text from text-and-image input (multimodal)](#generate-text-from-text-and-image-input-(multimodal))
+  * [Build multi-turn conversations (chat)](#build-multi-turn-conversations-(chat))
+  * [Build multi-turn conversations (chat) with function calling](#build-multi-turn-conversations-(chat)-with-function-calling)
 * [Options to control content generation](#options-to-control-content-generation)
-* [Function Calling](#function-calling)
+* [Function Calling with GeminiApp](#function-calling-with-geminiapp)
 
-> **Important:** This library is designed for Google AI Studio and Vertex AI Gemini API. Latest product information in included on the [Vertex AI Gemini API documentation page](https://cloud.google.com/vertex-ai/docs/generative-ai/model-reference/gemini).
+## Setup
+
+> **Important:** This library is designed for Google AI Studio and Vertex AI Gemini API. Latest product information is included on the [Vertex AI Gemini API documentation page](https://cloud.google.com/vertex-ai/docs/generative-ai/model-reference/gemini).
 
 ### Setup
 
 #### Option 1 - Google AI Studio API Key (ideal for prototyping)
-> **Important** Google AI Studio is currently available in 180+ countries, check out the [documentation to learn more](https://ai.google.dev/available_regions). Google AI Studio must only be used for prototyping with generative models
+> **Important** Google AI Studio is currently available in 180+ countries, check out the [documentation to learn more](https://ai.google.dev/available_regions). Google AI Studio must only be used for prototyping with generative models. If you're not in one of these countries or territories available for Google AI Studio use Gemini Pro in Vertex AI (Option 2 & 3).
 
 1. [Get an API Key](https://ai.google.dev/tutorials/setup).
 1. Add the [GeminiApp library](src/GeminiApp.js) to your project as a new script file.
-1. In your main script file you can initialize the GeminiApp library by calling the `new GeminiApp(YOUR_APKI_KEY_HERE)`
+1. In your main script file you can initialize the GeminiApp library by calling the `new GeminiApp(YOUR_APKI_KEY_HERE)`:
+
+```javascript
+const genAI = new GeminiApp(YOUR_APKI_KEY_HERE);
+```
 
 #### Option 2 - Vertex AI Cloud Platform project - scoped user account (prototyping/production)
 
-This option lets you access Gemini in Vertex AI adding the account you are executing your Google Apps Script project to IAM with at least a Vertex AI User role.
+This option lets you access Gemini Pro in Vertex AI adding the account you are executing your Google Apps Script project to Google Cloud Project IAM with at least a **Vertex AI User** role.
 
 1. [Select or create a Cloud Platform project](https://console.cloud.google.com/project).
 1. [Enable the Vertex AI API](https://console.cloud.google.com/flows/enableapi?apiid=aiplatform.googleapis.com).
@@ -51,16 +61,19 @@ const genAI = new GeminiApp({
     region: YOUR_PROJECT_LOCATION,
     project_id: YOUR_PROJECT_ID});
 ```
+
+> **Note**: Additional users can be added to your Apps Script project by opening IAM & Admin and Granting Access to users with at least the **Vertex AI User** role 
+
 #### Option 3 - Vertex AI Cloud Platform project - Service Account (prototyping/production)
 
-This option lets you access Gemini in Vertex AI adding a Service Account. This let you use the Gemini API with any user that has access to your Apps Script powered solution.
+This option lets you access Gemini in Vertex AI adding a Service Account. This let you use the Gemini API with any user that has access to your Apps Script powered solution. To use a Service Account you need to add the [OAuth2 Apps Script Library](https://github.com/googleworkspace/apps-script-oauth2) to your project.
 
 1. [Select or create a Cloud Platform project](https://console.cloud.google.com/project).
 1. [Enable the Vertex AI API](https://console.cloud.google.com/flows/enableapi?apiid=aiplatform.googleapis.com).
-1. Create a Service Account and add the Vertex AI User role.
-1. Create a JSON key and store the entire contents in your Apps Script project as a Script Property
-5. Add the [GeminiApp library](src/GeminiApp.js) to your project as a new script file.
-6. In your main script file you can initialize the GeminiApp library by calling the `new GeminiApp(configObject)` method providing a [supported region](https://cloud.google.com/vertex-ai/docs/generative-ai/model-reference/gemini#http_request) and Service Account key:
+1. Follow the instructions to [create a Service Account](https://ai.google.dev/examples/slides-advisor#create_a_service_account) and [install service account key](https://ai.google.dev/examples/slides-advisor#create_and_install_service_account_key)
+1. Follow the steps to [setup the OAuth2 Apps Script Library](https://github.com/googleworkspace/apps-script-oauth2?tab=readme-ov-file#setup) in your Apps Script project.
+1. Add the [GeminiApp library](src/GeminiApp.js) to your project as a new script file.
+1. In your main script file you can initialize the GeminiApp library by calling the `new GeminiApp(configObject)` method providing a [supported region](https://cloud.google.com/vertex-ai/docs/generative-ai/model-reference/gemini#http_request) and Service Account key:
 
 ```javascript
 const credentials = PropertiesService.getScriptProperties().getProperty("SERVICE_ACCOUNT_KEY");
@@ -97,9 +110,7 @@ async function runTextOnly() {
 ```
 
 #### Generate text from text-and-image input (multimodal)
-Gemini provides a multimodal model (gemini-pro-vision), so you can input both text and images. Make sure to review the image requirements for input.
-
-When the prompt input includes both text and images, use the `gemini-pro-vision` model with the generateContent method to generate text output:
+Gemini provides a multimodal model (gemini-pro-vision), so you can input both text and images. Make sure to review the image requirements for input. When the prompt input includes both text and images, use the `gemini-pro-vision` model with the generateContent method to generate text output:
 
 ```javascript
 const genAI = new GeminiApp(YOUR_CONFIG);
@@ -186,6 +197,93 @@ async function runMultiTurnChat() {
 }
 ```
 
+#### Build multi-turn conversations (chat) with function calling
+You can provide Gemini models with descriptions of functions. The model may ask you to call a function and send back the result to help the model handle your query.
+
+```javascript
+/**
+ * Multiplies an input value by 2.
+*/
+function double(input) {
+  console.log(`Gemini has asked to call this function and double ${input}`)
+  return {result: input * 2};
+}
+
+const genAI = new GeminiApp(YOUR_CONFIG)
+
+async function basicFunctionCalling() {
+  // Important: If using a Google AI Studio key the apiVersion needs to be declared as v1beta
+  const model = genAI.getGenerativeModel({ model: "gemini-pro" }, { apiVersion: 'v1beta' });
+
+  const doubleFunction = model.newFunction()
+    .setName("double")
+    .setDescription("Multiplies an input value by 2.")
+    .addParameter("input", "NUMBER", "Input The number to double")
+  
+  const chat = model.startChat()
+    .addFunction(doubleFunction);
+
+  const result = await chat.sendMessage('I have 7 cats. How many cats would I have if I wanted to double the number?');
+  const response = await result.response;
+  const text = response.text();
+  console.log(text);
+
+}
+```
+If you can use `chat.getHistory()` see the sequence of events:
+
+```javscript
+console.log(JSON.stringify(chat.getHistory()))
+
+// output
+[
+  {
+    "role": "user",
+    "parts": [
+      {
+        "text": "I have 7 cats. How many cats would I have if I wanted to double the number?"
+      }
+    ]
+  },
+  [
+    {
+      "role": "model",
+      "parts": [
+        {
+          "functionCall": {
+            "name": "double",
+            "args": {
+              "input": 7
+            }
+          }
+        }
+      ]
+    },
+    {
+      "role": "function",
+      "parts": [
+        {
+          "functionResponse": {
+            "name": "double",
+            "response": {
+              "result": 14
+            }
+          }
+        }
+      ]
+    }
+  ],
+  {
+    "parts": [
+      {
+        "text": "If you wanted to double the number of cats you have, you would have 14 cats."
+      }
+    ],
+    "role": "model"
+  }
+]
+```
+
 ### Options to control content generation
 
 You can control content generation by configuring model parameters and by using safety settings.
@@ -240,11 +338,9 @@ const safetySettings = [
 ];
 ```
 
-### Function Calling
+### Function Calling with GeminiApp
 
 Function calling lets developers create a description of a function in their code, then pass that description to a language model in a request. The response from the model includes the name of a function that matches the description and the arguments to call it with. Function calling lets you use functions as tools in generative AI applications, and you can define more than one function within a single request. Function calling returns JSON with the name of a function and the arguments to use in your code.
-
-> **Beta**: This feature is in Beta release. For more information, see the [API versions page](https://ai.google.dev/docs/api_versions).
 
 In GeminiApp to enable function calling you need to declare your functions to your model. The functions you declare are then added to a chat session. In the following example two functions are declared `getContactList()` which requires no parameters and `draftMessage()`, which requires `recipentEmail`, `subject` and `body`. 
 
@@ -261,6 +357,7 @@ async function draftCodingTipsByEmail() {
     ...parsedCredentials
   });
 
+  // Important: If using a Google AI Studio key the apiVersion needs to be declared as v1beta
   const model = genAI.getGenerativeModel({ model: "gemini-pro" }, { apiVersion: 'v1' });
 
   const getContactList = model.newFunction()
@@ -286,10 +383,7 @@ async function draftCodingTipsByEmail() {
   console.log(text);
 }
 ```
-
-> **Note**: If using function calling with a Google AI Studio key, the `apiVersion` currently needs to be declared as `v1beta`. For example, in the code above the line above:
-> `const model = genAI.getGenerativeModel({ model: "gemini-pro" }, { apiVersion: 'v1' });` needs to be rewritten as:
-> `const model = genAI.getGenerativeModel({ model: "gemini-pro" }, { apiVersion: 'v1beta' });`
+To use function calling your decalared functions also need to exist in your Apps Script project, as these functions are executed by GeminiApp and the responses are returned to the model. For a complete example visit [Exploring Gemini API Function Calling with Google Apps Script](https://medium.com/cts-technologies/genai-for-google-workspace-exploring-gemini-api-function-calling-with-google-apps-script-part-3-028785dafe3b)
 
 For more information : [https://cloud.google.com/vertex-ai/docs/generative-ai/multimodal/function-calling](https://cloud.google.com/vertex-ai/docs/generative-ai/multimodal/function-calling)
 

@@ -1,5 +1,5 @@
 // Here is where you define your access.
-// @See https://github.com/mhawksey/GeminiApp/blob/main/README.md for setup options
+// @See https://github.com/mhawksey/GeminiApp?tab=readme-ov-file#setup for setup options
 const genAI = new GeminiApp(YOUR_API_KEY);
 
 /**
