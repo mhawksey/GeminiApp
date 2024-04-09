@@ -1,516 +1,543 @@
-/*
- GeminiApp
-
- Copyright (c) 2023 Martin Hawksey
-
- Licensed under the Apache License, Version 2.0 (the "License");
- you may not use this file except in compliance with the License.
- You may obtain a copy of the License at
- 
- http://www.apache.org/licenses/LICENSE-2.0
- 
- Unless required by applicable law or agreed to in writing, software
- distributed under the License is distributed on an "AS IS" BASIS,
- WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- See the License for the specific language governing permissions and
- limitations under the License.
- 
- Based on: 
-
- ChatGPTApp
- https://github.com/scriptit-fr/ChatGPTApp
- 
- Copyright (c) 2023 Guillemine Allavena - Romain Vialard
- 
- Licensed under the Apache License, Version 2.0 (the "License");
- you may not use this file except in compliance with the License.
- You may obtain a copy of the License at
- 
- http://www.apache.org/licenses/LICENSE-2.0
- 
- Unless required by applicable law or agreed to in writing, software
- distributed under the License is distributed on an "AS IS" BASIS,
- WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- See the License for the specific language governing permissions and
- limitations under the License.
+/**
+ * This library includes software components derived from the following projects:
+ * [ChatGPTApp] (https://github.com/scriptit-fr/ChatGPTApp)
+ * [Google AI JavaScript SDK] (https://github.com/google/generative-ai-js/)
+ * 
+ * These components are licensed under the Apache License 2.0. 
+ * A copy of the license can be found in the LICENSE file.
  */
 
- const GeminiApp = (function () {
-  let PROJECT_ID = "";
-  let REGION = "";
-  let API_KEY = false;
-  let MODEL_VERSION = "gemini-1.0-pro";
-  let MODEL_VISION_VERSION = "gemini-1.0-pro-vision"
-  let verbose = true;
+/**
+ * @license
+ * Copyright 2024 Martin Hawksey
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 
-  /**
-   * @class
-   * Class representing a function known by function calling model
-   */
-  class FunctionObject {
+/**
+ * CoreFunctions for GenerativeModel and Chat.
+ */
+class _CoreFunctions {
+  constructor() {
+  }
 
-    constructor() {
-      let name = '';
-      let description = '';
-      let properties = {};
-      let parameters = {};
-      let required = [];
-      let argumentsInRightOrder = [];
-      let endingFunction = false;
-      let onlyArgs = false;
+  _countTokens(auth, model, params) {
+    const url = new RequestUrl(model, Task.COUNT_TOKENS, auth, false, {});
+    const response = this._makeRequest(
+      url,
+      JSON.stringify({ ...params, model })
+    );
+    return response;
+  };
 
-      /**
-       * Sets the name of a function.
-       * @param {string} nameOfYourFunction - The name to set for the function.
-       * @returns {FunctionObject} - The current Function instance.
-       */
-      this.setName = function (nameOfYourFunction) {
-        name = nameOfYourFunction;
-        return this;
-      };
+  _generateContent(auth, model, params, requestOptions) {
+    const url = new RequestUrl(
+      model,
+      Task.GENERATE_CONTENT,
+      auth,
+    /* stream */ false,
+      requestOptions
+    );
+    const responseJson = this._makeRequest(
+      url,
+      JSON.stringify(params)
+    );
+    return { response: this._addHelpers(responseJson) };
+  };
 
-      /**
-       * Sets the description of a function.
-       * @param {string} descriptionOfYourFunction - The description to set for the function.
-       * @returns {FunctionObject} - The current Function instance.
-       */
-      this.setDescription = function (descriptionOfYourFunction) {
-        description = descriptionOfYourFunction;
-        return this;
-      };
+  _makeRequest(
+    url,
+    body
+  ) {
 
-      /**
-       * OPTIONAL
-       * If enabled, the conversation with the chat will automatically end when this function is called.
-       * Default : false, eg the function is sent to the chat that will decide what the next action shoud be accordingly. 
-       * @param {boolean} bool - Whether or not you wish for the option to be enabled. 
-       * @returns {FunctionObject} - The current Function instance.
-       */
-      this.endWithResult = function (bool) {
-        if (bool) {
-          endingFunction = true;
-        }
-        return this;
+    const maxRetries = 5;
+    let retries = 0;
+    let success = false;
+
+    let options = {
+      'method': 'POST',
+      'contentType': 'application/json',
+      'muteHttpExceptions': true,
+      'headers': {},
+      'payload': body
+    };
+
+    if (url.apiKey) {
+      options.headers = { 'X-Goog-Api-Key': url.apiKey };
+    } else if (url._auth?.type === 'service_account') {
+      const credentials = this._credentialsForVertexAI(url._auth);
+      options.headers = { 'Authorization': `Bearer ${credentials.accessToken}` }
+    } else {
+      options.headers = { 'Authorization': `Bearer ${ScriptApp.getOAuthToken()}` };
+    }
+
+    let response;
+    while (retries < maxRetries && !success) {
+      response = UrlFetchApp.fetch(url, options);
+      let responseCode = response.getResponseCode();
+
+      if (responseCode === 200) {
+        // The request was successful, exit the loop.
+        response = JSON.parse(response.getContentText());
+        success = true;
       }
-
-      /**
-       * Adds a property (an argument) to the function.
-       * Note: Parameters are required by default. Set 'isOptional' to true to make a parameter optional.
-       *
-       * @param {string} name - The property name.
-       * @param {string} type - The property type.
-       * @param {string} description - The property description.
-       * @param {boolean} [isOptional] - To set if the argument is optional (default: false).
-       * @returns {FunctionObject} - The current Function instance.
-       */
-      this.addParameter = function (name, type, description, isOptional = false) {
-        let itemsType;
-
-        if (String(type).includes("Array")) {
-          let startIndex = type.indexOf("<") + 1;
-          let endIndex = type.indexOf(">");
-          itemsType = type.slice(startIndex, endIndex);
-          type = "array";
-        }
-
-        properties[name] = {
-          type: type,
-          description: description
-        };
-
-        if (type === "array") {
-          if (itemsType) {
-            properties[name]["items"] = {
-              type: itemsType
-            }
-          }
-          else {
-            throw Error("Please precise the type of the items contained in the array when calling addParameter. Use format Array.<itemsType> for the type parameter.");
-            return
-          }
-        }
-
-        argumentsInRightOrder.push(name);
-        if (!isOptional) {
-          required.push(name);
-        }
-        return this;
+      else if (responseCode === 429) {
+        console.warn(`Rate limit reached when calling Gemini API, will automatically retry in a few seconds.`);
+        // Rate limit reached, wait before retrying.
+        let delay = Math.pow(2, retries) * 1000; // Delay in milliseconds, starting at 1 second.
+        Utilities.sleep(delay);
+        retries++;
       }
-
-      this.addParameters = function (params) {
-        parameters = params;
-        return this;
+      else if (responseCode >= 500) {
+        // The server is temporarily unavailable, wait before retrying.
+        console.warn(`Gemini API returned ${responseCode} error, automatically retrying in a few seconds.`)
+        let delay = Math.pow(2, retries) * 1000; // Delay in milliseconds, starting at 1 second.
+        Utilities.sleep(delay);
+        retries++;
       }
-
-      /**
-       * OPTIONAL
-       * If enabled, the conversation will automatically end when this function is called and the chat will return the arguments in a stringified JSON object.
-       * Default : false
-       * @param {boolean} bool - Whether or not you wish for the option to be enabled. 
-       * @returns {FunctionObject} - The current Function instance.
-       */
-      this.onlyReturnArguments = function (bool) {
-        if (bool) {
-          onlyArgs = true;
-        }
-        return this;
+      else {
+        // The request failed for another reason, log the error and exit the loop.
+        console.error(`Request to Gemini failed with response code ${responseCode} - ${response.getContentText()}`);
+        break;
       }
+    }
 
-      this.toJSON = function () {
-        const jsonArgs = {
-          name: name,
-          description: description,
-          argumentsInRightOrder: argumentsInRightOrder,
-          endingFunction: endingFunction,
-          onlyArgs: onlyArgs
-        };
-        if (parameters.type) {
-          jsonArgs.parameters = parameters
+    if (!success) {
+      throw new Error(`Failed to call Gemini API after ${retries} retries.`);
+    }
+    return response
+  };
+
+  // @See https://github.com/googleworkspace/slides-advisor-add-on/blob/main/src/ai.js
+  _credentialsForVertexAI(auth) {
+    try {
+      const service = OAuth2.createService("Vertex")
+        .setTokenUrl('https://oauth2.googleapis.com/token')
+        .setPrivateKey(auth.private_key)
+        .setIssuer(auth.client_email)
+        .setPropertyStore(PropertiesService.getScriptProperties())
+        .setCache(CacheService.getScriptCache())
+        .setScope("https://www.googleapis.com/auth/cloud-platform");
+      return { accessToken: service.getAccessToken() }
+    } catch(e) {
+      console.error(e)
+    }
+  }
+
+/**
+ * Import from https://github.com/google/generative-ai-js/blob/main/packages/main/src/requests/request-helpers.ts
+ */
+
+  _formatGenerateContentInput(params) {
+    if (params.contents) {
+      return params
+    } else {
+      const content = this._formatNewContent(params)
+      return { contents: [content] }
+    }
+  }
+
+  _formatNewContent(request) {
+    let newParts = [];
+    if (typeof request === "string") {
+      newParts = [{ text: request }]
+    } else {
+      for (const partOrString of request) {
+        if (typeof partOrString === "string") {
+          newParts.push({ text: partOrString })
         } else {
-          jsonArgs.parameters = {
-            type: "OBJECT",
-            properties: properties,
-            required: required,
-            //nullable: false
-          }
+          newParts.push(partOrString)
         }
-        return jsonArgs;
       }
+    }
+    return this._assignRoleToPartsAndValidateSendMessageRequest(newParts)
+  }
+
+  _assignRoleToPartsAndValidateSendMessageRequest(parts) {
+    const userContent = { role: "user", parts: [] }
+    const functionContent = { role: "function", parts: [] }
+    let hasUserContent = false
+    let hasFunctionContent = false
+    for (const part of parts) {
+      if ("functionResponse" in part) {
+        functionContent.parts.push(part)
+        hasFunctionContent = true
+      } else {
+        userContent.parts.push(part)
+        hasUserContent = true
+      }
+    }
+
+    if (hasUserContent && hasFunctionContent) {
+      throw new Error(
+        "Within a single message, FunctionResponse cannot be mixed with other type of part in the request for sending chat message."
+      )
+    }
+
+    if (!hasUserContent && !hasFunctionContent) {
+      throw new Error(
+        "No content is provided for sending chat message."
+      )
+    }
+
+    if (hasUserContent) {
+      return userContent
+    }
+
+    return functionContent
+  }
+
+  _addHelpers(response) {
+    if (response.candidates && response.candidates.length > 0) {
+      if (response.candidates.length > 1) {
+        console.warn(
+          `This response had ${response.candidates.length} ` +
+          `candidates. Returning text from the first candidate only. ` +
+          `Access response.candidates directly to use the other candidates.`
+        )
+      }
+      if (response.candidates[0].finishReason === "MAX_TOKENS") {
+        console.warn(
+          `Gemini response has been troncated because it was too long. To resolve this issue, you can increase the maxOutputTokens property.`
+        );
+
+      }
+      if (this._hadBadFinishReason(response.candidates[0])) {
+        throw new Error(
+          `${this._formatBlockErrorMessage(response)}`,
+          response
+        )
+      }
+    } else if (response.promptFeedback) {
+      throw new Error(
+        `Text not available. ${this._formatBlockErrorMessage(response)}`,
+        response
+      )
+    }
+
+    response.text = function () {
+      if (response.candidates?.[0].content?.parts?.[0]?.text) {
+        return response.candidates[0].content.parts.map(({ text }) => text).join("");
+      } else {
+        return "";
+      }
+    };
+
+    response.getFunctionCall = function () {
+      if (response.candidates?.[0].content?.parts?.[0]?.functionCall) {
+        return response.candidates?.[0].content?.parts?.[0]?.functionCall;
+      } else {
+        return "";
+      }
+    };
+
+    return response
+  }
+
+  _hadBadFinishReason(candidate) {
+    const badFinishReasons = [FinishReason.RECITATION, FinishReason.SAFETY, FinishReason.OTHER]
+    return (
+      !!candidate.finishReason &&
+      badFinishReasons.includes(candidate.finishReason)
+    )
+  }
+
+  _formatBlockErrorMessage(response) {
+    let message = ""
+    if (
+      (!response.candidates || response.candidates.length === 0) &&
+      response.promptFeedback
+    ) {
+      message += "Response was blocked"
+      if (response.promptFeedback?.blockReason) {
+        message += ` due to ${response.promptFeedback.blockReason}`
+      }
+      if (response.promptFeedback?.blockReasonMessage) {
+        message += `: ${response.promptFeedback.blockReasonMessage}`
+      }
+    } else if (response.candidates?.[0]) {
+      const firstCandidate = response.candidates[0]
+      if (this._hadBadFinishReason(firstCandidate)) {
+        message += `Candidate was blocked due to ${firstCandidate.finishReason}`
+        if (firstCandidate.finishMessage) {
+          message += `: ${firstCandidate.finishMessage}`
+        }
+      }
+    }
+    return message
+  }
+}
+
+/**
+ * Class representing _GoogleGenerativeAI
+ * 
+ * @constructor
+ * @param {Object|string} options - Configuration options for the class instance.
+ * @param {string} [options.apiKey] - API key for authentication.
+ * @param {string} [options.region] - Region for the Vertex AI project.
+ * @param {string} [options.project_id] - Project ID for the Vertex AI project
+ * @param {string} [options.type] - Type of authentication (e.g., 'service_account').
+ * @param {string} [options.private_key] - Private key for service account authentication.
+ * @param {string} [options.client_email] - Client email for service account authentication.
+ * @param {string} [options.model] - The model to use (defaults to '').
+ */
+class _GoogleGenerativeAI {
+  constructor(options) {
+    this._auth = {};
+    if (typeof options === 'string') {
+      this._auth.apiKey = options
+    } else {
+      if (options.region && options.project_id) {
+        this._auth.region = options.region;
+        this._auth.project_id = options.project_id;
+      }
+      if (options.type && options.type === "service_account") {
+        this._auth.type = options.type;
+        this._auth.private_key = options.private_key;
+        this._auth.client_email = options.client_email;
+      }
+    }
+    this.tools = [];
+    this.model = options.model || ''
+  }
+
+  getGenerativeModel(modelParams, requestOptions) {
+    if (!modelParams.model) {
+      throw new Error(
+        `Must provide a model name. ` +
+        `Example: genai.getGenerativeModel({ model: 'my-model-name' })`
+      );
+    }
+    return new GenerativeModel(this._auth, modelParams, requestOptions);
+  }
+}
+/* @constructor
+ * @param {Object|string} options - Configuration options for the class instance.
+ * @param {string} [options.apiKey] - API key for authentication.
+ * @param {string} [options.region] - Region for the Vertex AI project.
+ * @param {string} [options.project_id] - Project ID for the Vertex AI project
+ * @param {string} [options.type] - Type of authentication (e.g., 'service_account').
+ * @param {string} [options.private_key] - Private key for service account authentication.
+ * @param {string} [options.client_email] - Client email for service account authentication.
+ * @param {string} [options.model] - The model to use (defaults to '').
+ */
+var GeminiApp = _GoogleGenerativeAI;
+
+
+class _GenerativeModel extends _CoreFunctions {
+  constructor(auth, modelParams, requestOptions) {
+    super();
+    this._auth = auth;
+    this.model = this.determineModelPath(modelParams.model);
+    this.generationConfig = modelParams.generationConfig || {}
+    this.safetySettings = modelParams.safetySettings || []
+    this.tools = modelParams.tools
+    this.requestOptions = requestOptions || {}
+  }
+
+  determineModelPath(model) {
+    return model.includes("/") ? model : `models/${model}`;
+  }
+
+  generateContent(request) {
+    const formattedParams = super._formatGenerateContentInput(request);
+    return super._generateContent(
+      this._auth,
+      this.model,
+      {
+        generationConfig: this.generationConfig,
+        safetySettings: this.safetySettings,
+        tools: this.tools,
+        ...formattedParams
+      },
+      this.requestOptions
+    );
+  }
+
+  countTokens(request) {
+    const formattedParams = super._formatGenerateContentInput(request);
+    return super._countTokens(this._auth,
+      this.model,
+      formattedParams);
+  }
+
+  startChat(startChatParams) {
+    return new ChatSession(
+      this._auth,
+      this.model,
+      {
+        tools: this.tools,
+        ...startChatParams,
+      },
+      this.requestOptions,
+    );
+  };
+
+  newFunction() {
+    return new FunctionObject()
+  }
+
+
+
+}
+var GenerativeModel = _GenerativeModel
+
+class ChatSession extends _CoreFunctions {
+
+  constructor(auth, model, params, requestOptions) {
+    super();
+    this._auth = auth;
+    this._history = [];
+    this._functions = [];
+    this.model = model;
+    this.params = params;
+    this.tools = this.params?.tools || [];
+    this.requestOptions = requestOptions;
+
+    if (params && params.history) {
+      this._validateChatHistory(params.history);
+      this._history = params.history;
     }
   }
 
   /**
-   * @class
-   * Class representing a chat.
+   * Gets the chat history so far. Blocked prompts are not added to history.
+   * Blocked candidates are not added to history, nor are the prompts that
+   * generated them.
    */
-  class Chat {
-    constructor() {
-      let contents = [];
-      let vision = false;
-      let functions = [];
-      let payload = {};
-      let temperature = 0.4;
-      let sequences = [];
-      let candidates = 1;
-      let max_output_tokens = 8192;
-      let safetySettings = {};
+  getHistory() {
+    return this._history
+  }
 
-      /**
-       * Add a content to the chat.
-       * @param {string} textPrompt - The content to be added.
-       * @param {boolean} [model] - OPTIONAL - True if content from model, False for user. 
-       * @returns {Chat} - The current Chat instance.
-       */
-      this.addContent = function (textPrompt, model) {
-        let role = "user";
-        if (model) {
-          role = "model";
+  sendMessage(request, skipFormat = false) {
+    const newContent = (skipFormat) ? request : super._formatNewContent(request);
+    const generateContentRequest = {
+      safetySettings: this.params?.safetySettings,
+      generationConfig: this.params?.generationConfig,
+      //tools: this.tools,
+      contents: [...this._history, newContent],
+    };
+    if (this.tools.length) generateContentRequest.tools = this.tools;
+
+    const result = super._generateContent(
+      this._auth,
+      this.model,
+      generateContentRequest,
+      this.requestOptions
+    );
+
+    let functionCall = result.response.getFunctionCall();
+    if (this._functions.length >> 0 && functionCall) {
+      this._history.push(newContent);
+      // Check if Gemini wanted to call a function
+
+      let functionParts = [];
+      let functionName = functionCall.name;
+      let functionArgs = functionCall.args;
+
+      let argsOrder = [];
+      let endWithResult = false;
+      let onlyReturnArguments = false;
+
+      for (let f in this._functions) {
+        let currentFunction = this._functions[f].toJSON();
+        if (currentFunction.name == functionName) {
+          argsOrder = currentFunction.argumentsInRightOrder; // get the args in the right order
+          endWithResult = currentFunction.endingFunction;
+          onlyReturnArguments = currentFunction.onlyArgs;
+          break;
         }
-        contents.push({
-          role: role,
-          parts: [{ text: textPrompt }]
-        });
-        return this;
-      };
+      }
 
-      /**
-       * Add a Google Drive file to the chat.
-       * @param {string} textPrompt - The content to be added.
-       * @param {DriveApp.File} file - The image or video to be added.
-       * @param {boolean} [model] - OPTIONAL - True if content from model, False for user. 
-       * @returns {Chat} - The current Chat instance.
-       */
-      this.addDriveData = function (textPrompt, file, model) {
-
-        let role = "user";
-        if (model) {
-          role = "model";
+      if (endWithResult) {
+        let functionResponse = this._callFunction(functionName, functionArgs, argsOrder);
+        if (typeof functionResponse === "string") {
+          functionResponse = { text: functionResponse };
+        }
+        return result;
+      } else if (onlyReturnArguments) {
+        return functionArgs;
+      } else {
+        let functionResponse = this._callFunction(functionName, functionArgs, argsOrder);
+        if (typeof functionResponse === "string") {
+          functionResponse = { content: functionResponse };
         }
 
-        const blob = file.getBlob()
-        const base64 = Utilities.base64Encode(blob.getBytes());
-        const mimeType = blob.getContentType();
-        vision = true;
-
-        contents.push({
-          role: role,
-          parts: [{ text: textPrompt }, {
-            "inlineData": {
-              "mimeType": mimeType,
-              "data": base64
+        // Inform the chat that the function has been called
+        functionParts.push({
+          "role": "model",
+          "parts": [{
+            "functionCall": {
+              "name": functionName,
+              "args": functionArgs
             }
           }]
         });
-        return this;
+
+        functionParts.push({
+          "role": "function",
+          "parts": [{
+            "functionResponse": {
+              "name": functionName,
+              "response": functionResponse
+            }
+          }]
+        });
       }
-
-      /**
-       * Add a function to the chat.
-       * @param {FunctionObject} functionObject - The function to be added.
-       * @returns {Chat} - The current Chat instance.
-       */
-      this.addFunction = function (functionObject) {
-        functions.push(functionObject);
-        return this;
+      return this.sendMessage(functionParts, true)
+    } else if (
+      result.response.candidates &&
+      result.response.candidates.length > 0
+    ) {
+      this._history.push(newContent);
+      const responseContent = {
+        parts: [],
+        role: "model",
+        ...result.response.candidates?.[0].content,
       };
-
-      /**
-       * Get the messages of the chat.
-       * returns {string[]} - The messages of the chat.
-       */
-      this.getMessages = function () {
-        return JSON.stringify(messages);
-      };
-
-      /**
-       * Get the functions of the chat.
-       * returns {FunctionObject[]} - The functions of the chat.
-       */
-      this.getFunctions = function () {
-        return JSON.stringify(functions);
-      };
-
-      /**
-       * Disable logs generated by this library
-       * @returns {Chat} - The current Chat instance.
-       */
-      this.disableLogs = function (bool) {
-        if (bool) {
-          verbose = false;
-        }
-        return this;
-      };
-
-      this.toJson = function () {
-        return {
-          messages: messages,
-          functions: functions,
-          temperature: temperature,
-          max_output_tokens: max_output_tokens,
-        };
-      };
-
-      /**
-       * Start the chat conversation.
-       * Sends all your messages and eventual function to chat GPT.
-       * Will return the last chat answer.
-       * If a function calling model is used, will call several functions until the chat decides that nothing is left to do.
-       * @param {{temperature?: number, max_output_tokens?: number, safetySettings?: object}} [advancedParametersObject] - OPTIONAL - For more advanced settings and specific usage only. {temperature, max_output_tokens, safetySettings}
-       * @returns {object} - the last message of the chat 
-       */
-      this.run = function (advancedParametersObject) {
-
-        if (!(REGION || PROJECT_ID) && !API_KEY) {
-          throw Error("Please set your Vertex AI project and region using GeminiApp.init(location, project)");
-        }
-
-        if ((!REGION && !PROJECT_ID) && !API_KEY) {
-          throw Error("Please set your Google AI Studio key using GeminiApp.initWithKey(apiKey)");
-        }
-
-        if (vision && functions.length) {
-          throw Error(`Function Calling is not currently supported in ${MODEL_VISION_VERSION}`);
-        }
-
-        let model = MODEL_VERSION;
-        if (vision) {
-          model = MODEL_VISION_VERSION;
-          max_output_tokens = 2048;
-        }
-
-        if (advancedParametersObject) {
-          if (advancedParametersObject.temperature) {
-            temperature = advancedParametersObject.temperature;
-          }
-          if (advancedParametersObject.max_output_tokens) {
-            max_output_tokens = advancedParametersObject.max_output_tokens;
-          }
-          if (advancedParametersObject.safetySettings){
-            payload.safetySettings = advancedParametersObject.safetySettings
-          }
-        }
-
-        payload.generationConfig = {
-          "temperature": temperature,
-          "candidateCount": candidates,
-          "maxOutputTokens": max_output_tokens,
-          "stopSequences": sequences
-        }
-
-        payload.contents = contents;
-
-        let functionCalling = false;
-
-        if (functions.length >> 0) {
-          // the user has added functions, enable function calling
-          functionCalling = true;
-          let payloadFunctions = Object.keys(functions).map(f => ({
-            name: functions[f].toJSON().name,
-            description: functions[f].toJSON().description,
-            parameters: functions[f].toJSON().parameters
-          }));
-          payload.tools = [];
-          payload.tools.push({ function_declarations: payloadFunctions });
-
-        }
-
-        let maxRetries = 5;
-        let retries = 0;
-        let success = false;
-        
-        let url = '';
-        let options = {
-          'method': 'POST',
-          'contentType': 'application/json',
-          'muteHttpExceptions': true,
-          'payload': JSON.stringify(payload)
-        };
-
-        if (REGION && PROJECT_ID){
-          options.headers = { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() };
-          url = `https://${REGION}-aiplatform.googleapis.com/v1/projects/${PROJECT_ID}/locations/${REGION}/publishers/google/models/${model}:streamGenerateContent`
-        } else if (API_KEY){
-          url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${API_KEY}`
-        }
-
-        let responseMessage, responseParts, functionObj, finish_reason;
-        while (retries < maxRetries && !success) {
-
-          let response = UrlFetchApp.fetch(url, options);
-          let responseCode = response.getResponseCode();
-
-          if (responseCode === 200) {
-            // The request was successful, exit the loop.
-            const parsedResponse = JSON.parse(response.getContentText());
-            responseMessage = (parsedResponse.candidates) ? parsedResponse.candidates[0] : parsedResponse[0].candidates[0];
-            responseParts = responseMessage.content.parts;
-            finish_reason = responseMessage.finishReason;
-            if (finish_reason === "MAX_TOKENS") {
-              console.warn(`Gemini response has been troncated because it was too long. To resolve this issue, you can increase the max_output_tokens property. max_output_tokens: ${max_output_tokens}, prompt_tokens: ${parsedResponse[0].usageMetadata.promptTokenCount}, completion_tokens: ${parsedResponse[0].usageMetadata.totalTokenCount}`);
-            } else if (finish_reason === "SAFETY") {
-              console.error(`Gemini response has been blocked because for safety. ${JSON.stringify(responseMessage.safetyRatings)}`);
-              break;
-            }
-            success = true;
-          }
-          else if (responseCode === 429) {
-            console.warn(`Rate limit reached when calling Gemini API, will automatically retry in a few seconds.`);
-            // Rate limit reached, wait before retrying.
-            let delay = Math.pow(2, retries) * 1000; // Delay in milliseconds, starting at 1 second.
-            Utilities.sleep(delay);
-            retries++;
-          }
-          else if (responseCode === 503) {
-            // The server is temporarily unavailable, wait before retrying.
-            let delay = Math.pow(2, retries) * 1000; // Delay in milliseconds, starting at 1 second.
-            Utilities.sleep(delay);
-            retries++;
-          }
-          else {
-            // The request failed for another reason, log the error and exit the loop.
-            console.error(`Request to Gemini failed with response code ${responseCode} - ${response.getContentText()}`);
-            break;
-          }
-        }
-
-        if (!success) {
-          throw new Error(`Failed to call Gemini API after ${retries} retries.`);
-        }
-
-        if (verbose) {
-          console.log('Got response from Gemini API');
-        }
-
-        if (functionCalling) {
-          // Check if Gemini wanted to call a function
-          if (responseParts[0].functionCall) {
-            // Call the function
-            let functionName = responseParts[0].functionCall.name;
-            let functionArgs = responseParts[0].functionCall.args;
-
-            let argsOrder = [];
-            let endWithResult = false;
-            let onlyReturnArguments = false;
-
-            for (let f in functions) {
-              let currentFunction = functions[f].toJSON();
-              if (currentFunction.name == functionName) {
-                argsOrder = currentFunction.argumentsInRightOrder; // get the args in the right order
-                endWithResult = currentFunction.endingFunction;
-                onlyReturnArguments = currentFunction.onlyArgs;
-                break;
-              }
-            }
-
-            if (endWithResult) {
-              let functionResponse = callFunction(functionName, functionArgs, argsOrder);
-              if (typeof functionResponse === "string") {
-                functionResponse = { text: functionResponse };
-              }
-              if (verbose) {
-                console.log("Conversation stopped because end function has been called");
-              }
-              return responseMessage;;
-            }
-            else if (onlyReturnArguments) {
-              if (verbose) {
-                console.log("Conversation stopped because argument return has been enabled - No function has been called");
-              }
-              return functionArgs;
-            }
-            else {
-              let functionResponse = callFunction(functionName, functionArgs, argsOrder);
-              if (typeof functionResponse === "string") {
-                functionResponse = { content: functionResponse };
-              }
-
-              if (verbose) {
-                console.log(`function ${functionName}() called by Gemini.`);
-              }
-
-              functionObj = {
-                "name": functionName,
-                "args": functionArgs
-              };
-
-              // Inform the chat that the function has been called
-              contents.push({
-                "role": "model",
-                "parts": [{
-                  "functionCall": functionObj
-                }]
-              });
-
-              contents.push({
-                "role": "function",
-                "parts": [{
-                  "functionResponse": {
-                    "name": functionName,
-                    "response": functionResponse
-                  }
-                }]
-              });
-            }
-            if (advancedParametersObject) {
-              return this.run(advancedParametersObject);
-            }
-            else {
-              return this.run();
-            }
-          }
-          else {
-            // if no function has been found, stop here
-            return responseMessage;
-          }
-        }
-        else {
-          return responseMessage;
-        }
+      this._history.push(responseContent);
+    } else {
+      const blockErrorMessage = super._formatBlockErrorMessage(result.response);
+      if (blockErrorMessage) {
+        console.warn(
+          `sendMessage() was unsuccessful. ${blockErrorMessage}. Inspect response object for details.`,
+        );
       }
     }
+    let finalResult = result;
+
+    return finalResult;
   }
 
-  function callFunction(functionName, jsonArgs, argsOrder) {
+  addFunction(functionObject) {
+    this._functions.push(functionObject);
+
+    const functionDeclaration = {
+      name: functionObject.toJSON().name,
+      description: functionObject.toJSON().description,
+      parameters: functionObject.toJSON().parameters
+    };
+
+    const toolsFunctionObject = this.tools.find(tool => tool.hasOwnProperty("functionDeclarations"));
+    if (toolsFunctionObject) {
+      toolsFunctionObject.functionDeclarations.push(functionDeclaration);
+    } else {
+      this.tools.push({ functionDeclarations: [functionDeclaration] })
+    }
+    return this
+  }
+
+  _callFunction(functionName, jsonArgs, argsOrder) {
     // Parse JSON arguments
     var argsObj = jsonArgs;
     let argsArray = argsOrder.map(argName => argsObj[argName]);
@@ -530,39 +557,325 @@
     }
   }
 
-  return {
-    /**
-     * Create a new chat.
-     * @params {string} apiKey - Your Gemini API key.
-     * @returns {Chat} - A new Chat instance.
-     */
-    newChat: function () {
-      return new Chat();
-    },
+  _validateChatHistory(history) {
+    let prevContent;
+    for (const currContent of history) {
+      const { role, parts } = currContent;
+      if (!prevContent && role !== "user") {
+        throw new Error(
+          `First content should be with role 'user', got ${role}`
+        );
+      }
+      if (!POSSIBLE_ROLES.includes(role)) {
+        throw new Error(
+          `Each item should include role field. Got ${role} but valid roles are: ${JSON.stringify(
+            POSSIBLE_ROLES
+          )}`
+        );
+      }
 
-    /**
-     * Create a new function.
-     * @returns {FunctionObject} - A new Function instance.
-     */
-    newFunction: function () {
-      return new FunctionObject();
-    },
+      if (!Array.isArray(parts)) {
+        throw new Error(
+          "Content should have 'parts' property with an array of Parts"
+        );
+      }
 
-    /**
-     * Initialise with Google Cloud project
-     * @param {string} location - Your Gemini Project Location.
-     * @param {string} project - Your Google Cloud Project with Gemini.
-     */
-    init: function (location, project) {
-      REGION = location;
-      PROJECT_ID = project
-    },
-    /**
-     * Initialise with Google AI Studio Key
-     * @param {string} apiKey - Google AI Studio Key.
-     */
-    initWithKey: function (apiKey) {
-      API_KEY = apiKey;
+      if (parts.length === 0) {
+        throw new Error("Each Content should have at least one part");
+      }
+
+      const countFields = {
+        text: 0,
+        inlineData: 0,
+        functionCall: 0,
+        functionResponse: 0,
+      };
+
+      for (const part of parts) {
+        for (const key of VALID_PART_FIELDS) {
+          if (key in part) {
+            countFields[key] += 1;
+          }
+        }
+      }
+      const validParts = VALID_PARTS_PER_ROLE[role];
+      for (const key of VALID_PART_FIELDS) {
+        if (!validParts.includes(key) && countFields[key] > 0) {
+          throw new Error(
+            `Content with role '${role}' can't contain '${key}' part`
+          );
+        }
+      }
+
+      if (prevContent) {
+        const validPreviousContentRoles = VALID_PREVIOUS_CONTENT_ROLES[role];
+        if (!validPreviousContentRoles.includes(prevContent.role)) {
+          throw new Error(
+            `Content with role '${role}' can't follow '${prevContent.role}'. Valid previous roles: ${JSON.stringify(
+              VALID_PREVIOUS_CONTENT_ROLES
+            )}`
+          );
+        }
+      }
+      prevContent = currContent;
     }
   }
-})();
+}
+
+/**
+ * import from https://github.com/google/generative-ai-js/blob/main/packages/main/src/requests/request.ts
+ */
+var BASE_URL_STUDIO = "https://generativelanguage.googleapis.com";
+var BASE_URL_VERTEX = "https://{REGION}-aiplatform.googleapis.com/{apiVersion}/projects/{PROJECT_ID}/locations/{REGION}/publishers/google";
+var DEFAULT_API_VERSION = "v1";
+
+/**
+ * import from https://github.com/google/generative-ai-js/blob/main/packages/main/types/enums.ts
+ */
+const POSSIBLE_ROLES = ["user", "model", "function"];
+
+
+/**
+ * Harm categories that would cause prompts or candidates to be blocked.
+ * @public
+ */
+const HarmCategory = Object.freeze({
+  HARM_CATEGORY_UNSPECIFIED: "HARM_CATEGORY_UNSPECIFIED",
+  HARM_CATEGORY_HATE_SPEECH: "HARM_CATEGORY_HATE_SPEECH",
+  HARM_CATEGORY_SEXUALLY_EXPLICIT: "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+  HARM_CATEGORY_HARASSMENT: "HARM_CATEGORY_HARASSMENT",
+  HARM_CATEGORY_DANGEROUS_CONTENT: "HARM_CATEGORY_DANGEROUS_CONTENT",
+});
+
+/**
+ * Threshold above which a prompt or candidate will be blocked.
+ * @public
+ */
+const HarmBlockThreshold = Object.freeze({
+  HARM_BLOCK_THRESHOLD_UNSPECIFIED: "HARM_BLOCK_THRESHOLD_UNSPECIFIED",
+  BLOCK_LOW_AND_ABOVE: "BLOCK_LOW_AND_ABOVE",
+  BLOCK_MEDIUM_AND_ABOVE: "BLOCK_MEDIUM_AND_ABOVE",
+  BLOCK_ONLY_HIGH: "BLOCK_ONLY_HIGH",
+  BLOCK_NONE: "BLOCK_NONE",
+});
+
+/**
+ * Probability that a prompt or candidate matches a harm category.
+ * @public
+ */
+const HarmProbability = Object.freeze({
+  HARM_PROBABILITY_UNSPECIFIED: "HARM_PROBABILITY_UNSPECIFIED",
+  NEGLIGIBLE: "NEGLIGIBLE",
+  LOW: "LOW",
+  MEDIUM: "MEDIUM",
+  HIGH: "HIGH",
+});
+
+/**
+ * Reason that a prompt was blocked.
+ * @public
+ */
+const BlockReason = Object.freeze({
+  BLOCKED_REASON_UNSPECIFIED: "BLOCKED_REASON_UNSPECIFIED",
+  SAFETY: "SAFETY",
+  OTHER: "OTHER",
+});
+
+const Task = Object.freeze({
+  GENERATE_CONTENT: "generateContent",
+  STREAM_GENERATE_CONTENT: "streamGenerateContent",
+  COUNT_TOKENS: "countTokens",
+  EMBED_CONTENT: "embedContent",
+  BATCH_EMBED_CONTENTS: "batchEmbedContents"
+});
+
+const FinishReason = Object.freeze({
+  FINISH_REASON_UNSPECIFIED: "FINISH_REASON_UNSPECIFIED",
+  STOP: "STOP",
+  MAX_TOKENS: "MAX_TOKENS",
+  SAFETY: "SAFETY",
+  RECITATION: "RECITATION",
+  OTHER: "OTHER"
+});
+
+const VALID_PART_FIELDS = [
+  "text",
+  "inlineData",
+  "functionCall",
+  "functionResponse",
+];
+
+const VALID_PARTS_PER_ROLE = Object.freeze({
+  user: ["text", "inlineData"],
+  function: ["functionResponse"],
+  model: ["text", "functionCall"],
+});
+
+const VALID_PREVIOUS_CONTENT_ROLES = Object.freeze({
+  user: ["model"],
+  function: ["model"],
+  model: ["user", "function"],
+});
+
+
+class RequestUrl {
+  constructor(model, task, auth, stream = false, requestOptions) {
+    this.model = model;
+    this.task = task;
+    this._auth = auth;
+    this.apiKey = auth.apiKey ?? '';
+    this.stream = stream;
+    this.requestOptions = requestOptions;
+  }
+  toString() {
+    let url = '';
+    const apiVersion = this.requestOptions?.apiVersion || DEFAULT_API_VERSION;
+
+    if (this._auth.region && this._auth.project_id) {
+      const replacementMap = { REGION: this._auth.region, PROJECT_ID: this._auth.project_id, apiVersion: apiVersion }
+      url = BASE_URL_VERTEX.replace(/\{(\w+)\}/g, (match, key) => replacementMap[key] || match) + `/${this.model}:${this.task}`;
+    } else {
+      url = `${BASE_URL_STUDIO}/${apiVersion}/${this.model}:${this.task}`
+    }
+    // if (this.stream) {
+    //   url += "?alt=sse"
+    // }
+    return url
+  }
+}
+
+/**
+  * @class
+  * Class representing a function known by function calling model
+  */
+class _FunctionObject {
+  constructor() {
+    let name = '';
+    let description = '';
+    let properties = {};
+    let parameters = {};
+    let required = [];
+    let argumentsInRightOrder = [];
+    let endingFunction = false;
+    let onlyArgs = false;
+
+    /**
+     * Sets the name of a function.
+     * @param {string} nameOfYourFunction - The name to set for the function.
+     * @returns {FunctionObject} - The current Function instance.
+     */
+    this.setName = function (nameOfYourFunction) {
+      name = nameOfYourFunction;
+      return this;
+    };
+
+    /**
+     * Sets the description of a function.
+     * @param {string} descriptionOfYourFunction - The description to set for the function.
+     * @returns {FunctionObject} - The current Function instance.
+     */
+    this.setDescription = function (descriptionOfYourFunction) {
+      description = descriptionOfYourFunction;
+      return this;
+    };
+
+    /**
+     * OPTIONAL
+     * If enabled, the conversation with the chat will automatically end when this function is called.
+     * Default : false, eg the function is sent to the chat that will decide what the next action shoud be accordingly. 
+     * @param {boolean} bool - Whether or not you wish for the option to be enabled. 
+     * @returns {FunctionObject} - The current Function instance.
+     */
+    this.endWithResult = function (bool) {
+      if (bool) {
+        endingFunction = true;
+      }
+      return this;
+    }
+
+    /**
+     * Adds a property (an argument) to the function.
+     * Note: Parameters are required by default. Set 'isOptional' to true to make a parameter optional.
+     *
+     * @param {string} name - The property name.
+     * @param {string} type - The property type.
+     * @param {string} description - The property description.
+     * @param {boolean} [isOptional] - To set if the argument is optional (default: false).
+     * @returns {FunctionObject} - The current Function instance.
+     */
+    this.addParameter = function (name, type, description, isOptional = false) {
+      let itemsType;
+
+      if (String(type).includes("Array")) {
+        let startIndex = type.indexOf("<") + 1;
+        let endIndex = type.indexOf(">");
+        itemsType = type.slice(startIndex, endIndex);
+        type = "array";
+      }
+
+      properties[name] = {
+        type: type,
+        description: description
+      };
+
+      if (type === "array") {
+        if (itemsType) {
+          properties[name]["items"] = {
+            type: itemsType
+          }
+        }
+        else {
+          throw Error("Please precise the type of the items contained in the array when calling addParameter. Use format Array.<itemsType> for the type parameter.");
+          return
+        }
+      }
+
+      argumentsInRightOrder.push(name);
+      if (!isOptional) {
+        required.push(name);
+      }
+      return this;
+    }
+
+    this.addParameters = function (params) {
+      parameters = params;
+      return this;
+    }
+
+    /**
+     * OPTIONAL
+     * If enabled, the conversation will automatically end when this function is called and the chat will return the arguments in a stringified JSON object.
+     * Default : false
+     * @param {boolean} bool - Whether or not you wish for the option to be enabled. 
+     * @returns {FunctionObject} - The current Function instance.
+     */
+    this.onlyReturnArguments = function (bool) {
+      if (bool) {
+        onlyArgs = true;
+      }
+      return this;
+    }
+
+    this.toJSON = function () {
+      const jsonArgs = {
+        name: name,
+        description: description,
+        argumentsInRightOrder: argumentsInRightOrder,
+        endingFunction: endingFunction,
+        onlyArgs: onlyArgs
+      };
+      if (parameters.type) {
+        jsonArgs.parameters = parameters
+      } else {
+        jsonArgs.parameters = {
+          type: "OBJECT",
+          properties: properties,
+          required: required,
+          //nullable: false
+        }
+      }
+      return jsonArgs;
+    }
+  }
+}
+var FunctionObject = _FunctionObject;
