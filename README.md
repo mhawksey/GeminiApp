@@ -1,6 +1,14 @@
 # GeminiApp Google Apps Script Library Documentation
 
-The GeminiApp is a library that allows integration to Google's Gemini API in your Google Apps Script projects. It allows for mutli-modal prompts, structured conversation and function calling.
+The GeminiApp is a library that allows integration to Google's Gemini API in your Google Apps Script projects. It allows for mutli-modal prompts, structured conversations and function calling.
+
+> **Google Cloud Next '24 Demo**: For a complete personalised mail merge demo visit [Exploring Gemini API Function Calling with Google Apps Script](https://medium.com/cts-technologies/genai-for-google-workspace-exploring-gemini-api-function-calling-with-google-apps-script-part-3-028785dafe3b)
+
+## Features
+
+* **Prototyping to Production**: Seamlessly transition from an API key with Google AI Studio to cloud deployment with a service account in Vertex AI, you only have to change your initialisation configuration.
+* **Chat and Content Creation**: Utilize the same Google examples/methods as used in the Google JavaScript SDK, with the added features of error handling and exponential backoff
+* **Function Calling**: Easily manage function declarations, parameter passing, and response orchestration. As illustrated in the repo documentation helper methods make it easy for your to declare and add functions to your calls to Gemini
 
 > **Acknowledgement** - this library is based on [ChatGPTApp](https://github.com/scriptit-fr/ChatGPTApp) by Guillemine Allavena and Romain Vialard at [Scriptit](https://www.scriptit.fr/) and the [Google AI JavaScript SDK](https://github.com/google/generative-ai-js/) by Google.
 
