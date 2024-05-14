@@ -233,6 +233,14 @@ class _CoreFunctions {
       }
     };
 
+    response.json = function () {
+      if (response.candidates?.[0].content?.parts?.[0]?.text) {
+        return response.candidates[0].content.parts.map(({ text }) => JSON.parse(text));
+      } else {
+        return "";
+      }
+    };
+
     response.getFunctionCall = function () {
       if (response.candidates?.[0].content?.parts?.[0]?.functionCall) {
         return response.candidates?.[0].content?.parts?.[0]?.functionCall;
