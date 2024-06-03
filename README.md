@@ -1,6 +1,6 @@
 # GeminiApp Google Apps Script Library Documentation
 
-The GeminiApp is a library that allows integration to Google's Gemini API in your Google Apps Script projects. It allows for mutli-modal prompts, structured conversations and function calling.
+The GeminiApp is a library that allows integration to Google's Gemini API in your Google Apps Script projects. It allows for multi-modal prompts, structured conversations and function calling.
 
 > **Google Cloud Next '24 Demo**: For a complete personalised mail merge demo visit [Exploring Gemini API Function Calling with Google Apps Script](https://medium.com/cts-technologies/genai-for-google-workspace-exploring-gemini-api-function-calling-with-google-apps-script-part-3-028785dafe3b)
 
@@ -391,7 +391,7 @@ async function draftCodingTipsByEmail() {
   console.log(text);
 }
 ```
-To use function calling your decalared functions also need to exist in your Apps Script project, as these functions are executed by GeminiApp and the responses are returned to the model. For a complete example visit [Exploring Gemini API Function Calling with Google Apps Script](https://medium.com/cts-technologies/genai-for-google-workspace-exploring-gemini-api-function-calling-with-google-apps-script-part-3-028785dafe3b)
+To use function calling your declared functions also need to exist in your Apps Script project, as these functions are executed by GeminiApp and the responses are returned to the model. For a complete example visit [Exploring Gemini API Function Calling with Google Apps Script](https://medium.com/cts-technologies/genai-for-google-workspace-exploring-gemini-api-function-calling-with-google-apps-script-part-3-028785dafe3b)
 
 For more information : [https://cloud.google.com/vertex-ai/docs/generative-ai/multimodal/function-calling](https://cloud.google.com/vertex-ai/docs/generative-ai/multimodal/function-calling)
 
