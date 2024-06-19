@@ -92,16 +92,16 @@ class _CoreFunctions {
         success = true;
       }
       else if (responseCode === 429) {
-        console.warn(`Rate limit reached when calling Gemini API, will automatically retry in a few seconds.`);
         // Rate limit reached, wait before retrying.
         let delay = Math.pow(2, retries) * 1000; // Delay in milliseconds, starting at 1 second.
+        console.warn(`Rate limit reached when calling Gemini API, automatically retrying in ${delay/1000} seconds.`);
         Utilities.sleep(delay);
         retries++;
       }
       else if (responseCode >= 500) {
         // The server is temporarily unavailable, wait before retrying.
-        console.warn(`Gemini API returned ${responseCode} error, automatically retrying in a few seconds.`)
         let delay = Math.pow(2, retries) * 1000; // Delay in milliseconds, starting at 1 second.
+        console.warn(`Gemini API returned ${responseCode} error, automatically retrying in ${delay/1000} seconds.`);
         Utilities.sleep(delay);
         retries++;
       }
