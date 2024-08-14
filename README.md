@@ -328,7 +328,7 @@ const safetySettings = [
   },
 ];
 
-const model = genAI.getGenerativeModel({ model: "MODEL_NAME", safetySettings });
+const model = genAI.getGenerativeModel({ model: "MODEL_NAME", safetySettings: safetySettings });
 ```
 
 You can also set more than one safety setting:
