@@ -635,7 +635,7 @@ class ChatSession extends _CoreFunctions {
  */
 var BASE_URL_STUDIO = "https://generativelanguage.googleapis.com";
 var BASE_URL_VERTEX = "https://{REGION}-aiplatform.googleapis.com/{apiVersion}/projects/{PROJECT_ID}/locations/{REGION}/publishers/google";
-var DEFAULT_API_VERSION = "v1";
+var DEFAULT_API_VERSION = "v1beta";
 
 /**
  * import from https://github.com/google/generative-ai-js/blob/main/packages/main/types/enums.ts
