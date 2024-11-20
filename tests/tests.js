@@ -76,3 +76,59 @@ async function runMultiTurnChat() {
   const text2 = response2.text();
   console.log(text2);
 }
+
+async function systemInstruction() {
+  // [START system_instruction]
+  // Make sure to include these imports:
+  // import { GoogleGenerativeAI } from "@google/generative-ai";
+  //const genAI = new GoogleGenerativeAI(process.env.API_KEY);
+  const model = genAI.getGenerativeModel({
+    model: "gemini-1.5-flash",
+    systemInstruction: "You are a cat. Your name is Neko.",
+  });
+
+  const prompt = "Good morning! How are you?";
+
+  const result = await model.generateContent(prompt);
+  const response = result.response;
+  const text = response.text();
+  console.log(text);
+  // [END system_instruction]
+}
+
+async function jsonControlledGeneration() {
+  // [START json_controlled_generation]
+  // Make sure to include these imports:
+  // import { GoogleGenerativeAI, SchemaType } from "@google/generative-ai";
+  //const genAI = new GoogleGenerativeAI(process.env.API_KEY);
+
+  const schema = {
+    description: "List of recipes",
+    type: SchemaType.ARRAY,
+    items: {
+      type: SchemaType.OBJECT,
+      properties: {
+        recipeName: {
+          type: SchemaType.STRING,
+          description: "Name of the recipe",
+          nullable: false,
+        },
+      },
+      required: ["recipeName"],
+    },
+  };
+
+  const model = genAI.getGenerativeModel({
+    model: "gemini-1.5-pro",
+    generationConfig: {
+      responseMimeType: "application/json",
+      responseSchema: schema,
+    },
+  });
+
+  const result = await model.generateContent(
+    "List a few popular cookie recipes.",
+  );
+  console.log(result.response.json());
+  // [END json_controlled_generation]
+}

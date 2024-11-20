@@ -94,14 +94,14 @@ class _CoreFunctions {
       else if (responseCode === 429) {
         // Rate limit reached, wait before retrying.
         let delay = Math.pow(2, retries) * 1000; // Delay in milliseconds, starting at 1 second.
-        console.warn(`Rate limit reached when calling Gemini API, automatically retrying in ${delay/1000} seconds.`);
+        console.warn(`Rate limit reached when calling Gemini API, automatically retrying in ${delay / 1000} seconds.`);
         Utilities.sleep(delay);
         retries++;
       }
       else if (responseCode >= 500) {
         // The server is temporarily unavailable, wait before retrying.
         let delay = Math.pow(2, retries) * 1000; // Delay in milliseconds, starting at 1 second.
-        console.warn(`Gemini API returned ${responseCode} error, automatically retrying in ${delay/1000} seconds.`);
+        console.warn(`Gemini API returned ${responseCode} error, automatically retrying in ${delay / 1000} seconds.`);
         Utilities.sleep(delay);
         retries++;
       }
@@ -129,23 +129,64 @@ class _CoreFunctions {
         .setCache(CacheService.getScriptCache())
         .setScope("https://www.googleapis.com/auth/cloud-platform");
       return { accessToken: service.getAccessToken() }
-    } catch(e) {
+    } catch (e) {
       console.error(e)
     }
   }
 
-/**
- * Import from https://github.com/google/generative-ai-js/blob/main/packages/main/src/requests/request-helpers.ts
- */
+  /**
+   * Import from https://github.com/google/generative-ai-js/blob/main/packages/main/src/requests/request-helpers.ts
+   */
 
   _formatGenerateContentInput(params) {
+    let formattedRequest
     if (params.contents) {
-      return params
+      formattedRequest = params
     } else {
+      // Array or string
       const content = this._formatNewContent(params)
-      return { contents: [content] }
+      formattedRequest = { contents: [content] }
     }
+    if (params.systemInstruction) {
+      formattedRequest.systemInstruction = this._formatSystemInstruction(
+        params.systemInstruction
+      )
+    }
+    return formattedRequest
   }
+
+  _formatCountTokensInput(params, modelParams) {
+    let formattedGenerateContentRequest = {
+      model: modelParams?.model,
+      generationConfig: modelParams?.generationConfig,
+      safetySettings: modelParams?.safetySettings,
+      tools: modelParams?.tools,
+      toolConfig: modelParams?.toolConfig,
+      systemInstruction: modelParams?.systemInstruction,
+      cachedContent: modelParams?.cachedContent?.name,
+      contents: []
+    }
+    const containsGenerateContentRequest = params.generateContentRequest != null
+    if (params.contents) {
+      if (containsGenerateContentRequest) {
+        throw new GoogleGenerativeAIRequestInputError(
+          "CountTokensRequest must have one of contents or generateContentRequest, not both."
+        )
+      }
+      formattedGenerateContentRequest.contents = params.contents
+    } else if (containsGenerateContentRequest) {
+      formattedGenerateContentRequest = {
+        ...formattedGenerateContentRequest,
+        ...params.generateContentRequest
+      }
+    } else {
+      // Array or string
+      const content = formatNewContent(params)
+      formattedGenerateContentRequest.contents = [content]
+    }
+    return { generateContentRequest: formattedGenerateContentRequest }
+  }
+
 
   _formatNewContent(request) {
     let newParts = [];
@@ -161,6 +202,25 @@ class _CoreFunctions {
       }
     }
     return this._assignRoleToPartsAndValidateSendMessageRequest(newParts)
+  }
+
+  _formatSystemInstruction(input) {
+    if (input == null) {
+      return undefined
+    } else if (typeof input === "string") {
+      return {
+        role: "system",
+        parts: [{ text: input }]
+      }
+    } else if (input.text) {
+      return { role: "system", parts: [input] }
+    } else if (input.parts) {
+      if (!input.role) {
+        return { role: "system", parts: input.parts }
+      } else {
+        return input
+      }
+    }
   }
 
   _assignRoleToPartsAndValidateSendMessageRequest(parts) {
@@ -198,40 +258,86 @@ class _CoreFunctions {
   }
 
   _addHelpers(response) {
-    if (response.candidates && response.candidates.length > 0) {
-      if (response.candidates.length > 1) {
-        console.warn(
-          `This response had ${response.candidates.length} ` +
-          `candidates. Returning text from the first candidate only. ` +
-          `Access response.candidates directly to use the other candidates.`
-        )
-      }
-      if (response.candidates[0].finishReason === "MAX_TOKENS") {
-        console.warn(
-          `Gemini response has been troncated because it was too long. To resolve this issue, you can increase the maxOutputTokens property.`
-        );
-
-      }
-      if (this._hadBadFinishReason(response.candidates[0])) {
+    response.text = () => {
+      if (response.candidates && response.candidates.length > 0) {
+        if (response.candidates.length > 1) {
+          console.warn(
+            `This response had ${response.candidates.length} ` +
+            `candidates. Returning text from the first candidate only. ` +
+            `Access response.candidates directly to use the other candidates.`
+          )
+        }
+        if (this._hadBadFinishReason(response.candidates[0])) {
+          throw new Error(
+            `${this._formatBlockErrorMessage(response)}`,
+            response
+          )
+        }
+        return this._getText(response)
+      } else if (response.promptFeedback) {
         throw new Error(
-          `${this._formatBlockErrorMessage(response)}`,
+          `Text not available. ${this._formatBlockErrorMessage(response)}`,
           response
         )
       }
-    } else if (response.promptFeedback) {
-      throw new Error(
-        `Text not available. ${this._formatBlockErrorMessage(response)}`,
-        response
-      )
+      return ""
+    }
+    /**
+     * TODO: remove at next major version
+     */
+    response.functionCall = () => {
+      if (response.candidates && response.candidates.length > 0) {
+        if (response.candidates.length > 1) {
+          console.warn(
+            `This response had ${response.candidates.length} ` +
+            `candidates. Returning function calls from the first candidate only. ` +
+            `Access response.candidates directly to use the other candidates.`
+          )
+        }
+        if (this._hadBadFinishReason(response.candidates[0])) {
+          throw new Error(
+            `${this._formatBlockErrorMessage(response)}`,
+            response
+          )
+        }
+        console.warn(
+          `response.functionCall() is deprecated. ` +
+          `Use response.functionCalls() instead.`
+        )
+        return this._getFunctionCalls(response)[0]
+      } else if (response.promptFeedback) {
+        throw new Error(
+          `Function call not available. ${this._formatBlockErrorMessage(response)}`,
+          response
+        )
+      }
+      return undefined
+    }
+    response.functionCalls = () => {
+      if (response.candidates && response.candidates.length > 0) {
+        if (response.candidates.length > 1) {
+          console.warn(
+            `This response had ${response.candidates.length} ` +
+            `candidates. Returning function calls from the first candidate only. ` +
+            `Access response.candidates directly to use the other candidates.`
+          )
+        }
+        if (this._hadBadFinishReason(response.candidates[0])) {
+          throw new Error(
+            `${this._formatBlockErrorMessage(response)}`,
+            response
+          )
+        }
+        return this._getFunctionCalls(response)
+      } else if (response.promptFeedback) {
+        throw new Error(
+          `Function call not available. ${this._formatBlockErrorMessage(response)}`,
+          response
+        )
+      }
+      return undefined
     }
 
-    response.text = function () {
-      if (response.candidates?.[0].content?.parts?.[0]?.text) {
-        return response.candidates[0].content.parts.map(({ text }) => text).join("");
-      } else {
-        return "";
-      }
-    };
 
     response.json = function () {
       if (response.candidates?.[0].content?.parts?.[0]?.text) {
@@ -240,16 +346,53 @@ class _CoreFunctions {
         return "";
       }
     };
-
-    response.getFunctionCall = function () {
-      if (response.candidates?.[0].content?.parts?.[0]?.functionCall) {
-        return response.candidates?.[0].content?.parts?.[0]?.functionCall;
-      } else {
-        return "";
-      }
-    };
-
     return response
+  }
+
+  _getText(response) {
+    const textStrings = []
+    if (response.candidates?.[0].content?.parts) {
+      for (const part of response.candidates?.[0].content?.parts) {
+        if (part.text) {
+          textStrings.push(part.text)
+        }
+        if (part.executableCode) {
+          textStrings.push(
+            "\n```" +
+            part.executableCode.language +
+            "\n" +
+            part.executableCode.code +
+            "\n```\n"
+          )
+        }
+        if (part.codeExecutionResult) {
+          textStrings.push(
+            "\n```\n" + part.codeExecutionResult.output + "\n```\n"
+          )
+        }
+      }
+    }
+    if (textStrings.length > 0) {
+      return textStrings.join("")
+    } else {
+      return ""
+    }
+  }
+
+  _getFunctionCalls(response) {
+    const functionCalls = []
+    if (response.candidates?.[0].content?.parts) {
+      for (const part of response.candidates?.[0].content?.parts) {
+        if (part.functionCall) {
+          functionCalls.push(part.functionCall)
+        }
+      }
+    }
+    if (functionCalls.length > 0) {
+      return functionCalls
+    } else {
+      return undefined
+    }
   }
 
   _hadBadFinishReason(candidate) {
@@ -346,19 +489,30 @@ class _GenerativeModel extends _CoreFunctions {
   constructor(auth, modelParams, requestOptions) {
     super();
     this._auth = auth;
-    this.model = this.determineModelPath(modelParams.model);
-    this.generationConfig = modelParams.generationConfig || {}
-    this.safetySettings = modelParams.safetySettings || []
-    this.tools = modelParams.tools
-    this.requestOptions = requestOptions || {}
+    this._requestOptions = requestOptions
+    if (modelParams.model.includes("/")) {
+      // Models may be named "models/model-name" or "tunedModels/model-name"
+      this.model = modelParams.model
+    } else {
+      // If path is not included, assume it's a non-tuned model.
+      this.model = `models/${modelParams.model}`
+    }
+    this.generationConfig = modelParams.generationConfig || {};
+    this.safetySettings = modelParams.safetySettings || [];
+    this.tools = modelParams.tools;
+    this.toolConfig = modelParams.toolConfig;
+    this.systemInstruction = this._formatSystemInstruction(
+      modelParams.systemInstruction
+    )
+    this.cachedContent = modelParams.cachedContent
   }
 
-  determineModelPath(model) {
-    return model.includes("/") ? model : `models/${model}`;
-  }
-
-  generateContent(request) {
+  generateContent(request, requestOptions = {}) {
     const formattedParams = super._formatGenerateContentInput(request);
+    const generativeModelRequestOptions = {
+      ...this._requestOptions,
+      ...requestOptions
+    }
     return super._generateContent(
       this._auth,
       this.model,
@@ -366,17 +520,35 @@ class _GenerativeModel extends _CoreFunctions {
         generationConfig: this.generationConfig,
         safetySettings: this.safetySettings,
         tools: this.tools,
+        toolConfig: this.toolConfig,
+        systemInstruction: this.systemInstruction,
+        cachedContent: this.cachedContent?.name,
         ...formattedParams
       },
-      this.requestOptions
+      generativeModelRequestOptions
     );
   }
 
-  countTokens(request) {
-    const formattedParams = super._formatGenerateContentInput(request);
-    return super._countTokens(this._auth,
+  countTokens(request, requestOptions = {}) {
+    //const formattedParams = super._formatGenerateContentInput(request);
+    const formattedParams = super._formatCountTokensInput(request, {
+      model: this.model,
+      generationConfig: this.generationConfig,
+      safetySettings: this.safetySettings,
+      tools: this.tools,
+      toolConfig: this.toolConfig,
+      systemInstruction: this.systemInstruction,
+      cachedContent: this.cachedContent
+    })
+    const generativeModelRequestOptions = {
+      ...this._requestOptions,
+      ...requestOptions
+    }
+    return super._countTokens(
+      this._auth,
       this.model,
-      formattedParams);
+      formattedParams,
+      generativeModelRequestOptions);
   }
 
   startChat(startChatParams) {
@@ -384,8 +556,13 @@ class _GenerativeModel extends _CoreFunctions {
       this._auth,
       this.model,
       {
+        generationConfig: this.generationConfig,
+        safetySettings: this.safetySettings,
         tools: this.tools,
-        ...startChatParams,
+        toolConfig: this.toolConfig,
+        systemInstruction: this.systemInstruction,
+        cachedContent: this.cachedContent?.name,
+        ...startChatParams
       },
       this.requestOptions,
     );
@@ -402,7 +579,7 @@ var GenerativeModel = _GenerativeModel
 
 class ChatSession extends _CoreFunctions {
 
-  constructor(auth, model, params, requestOptions) {
+  constructor(auth, model, params, _requestOptions = {}) {
     super();
     this._auth = auth;
     this._history = [];
@@ -410,11 +587,10 @@ class ChatSession extends _CoreFunctions {
     this.model = model;
     this.params = params;
     this.tools = this.params?.tools || [];
-    this.requestOptions = requestOptions;
-
-    if (params && params.history) {
-      this._validateChatHistory(params.history);
-      this._history = params.history;
+    this._requestOptions = _requestOptions
+    if (params?.history) {
+      this._validateChatHistory(params.history)
+      this._history = params.history
     }
   }
 
@@ -427,101 +603,54 @@ class ChatSession extends _CoreFunctions {
     return this._history
   }
 
-  sendMessage(request, skipFormat = false) {
-    const newContent = (skipFormat) ? request : super._formatNewContent(request);
+  sendMessage(request, requestOptions = {}) {
+    const newContent = super._formatNewContent(request);
     const generateContentRequest = {
-      safetySettings: this.params?.safetySettings,
-      generationConfig: this.params?.generationConfig,
-      //tools: this.tools,
-      contents: [...this._history, newContent],
-    };
-    if (this.tools.length) generateContentRequest.tools = this.tools;
+      safetySettings: this?.safetySettings,
+      generationConfig: this?.generationConfig,
+      tools: this?.tools,
+      toolConfig: this?.toolConfig,
+      systemInstruction: this?.systemInstruction,
+      cachedContent: this?.cachedContent,
+      contents: [...this._history, newContent]
+    }
+
+    const chatSessionRequestOptions = {
+      ...this._requestOptions,
+      ...requestOptions
+    }
 
     const result = super._generateContent(
       this._auth,
       this.model,
       generateContentRequest,
-      this.requestOptions
+      this.requestOptions,
+      chatSessionRequestOptions
     );
 
-    let functionCall = result.response.getFunctionCall();
-    if (this._functions.length >> 0 && functionCall) {
-      this._history.push(newContent);
-      // Check if Gemini wanted to call a function
 
-      let functionParts = [];
-      let functionName = functionCall.name;
-      let functionArgs = functionCall.args;
-
-      let argsOrder = [];
-      let endWithResult = false;
-      let onlyReturnArguments = false;
-
-      for (let f in this._functions) {
-        let currentFunction = this._functions[f].toJSON();
-        if (currentFunction.name == functionName) {
-          argsOrder = currentFunction.argumentsInRightOrder; // get the args in the right order
-          endWithResult = currentFunction.endingFunction;
-          onlyReturnArguments = currentFunction.onlyArgs;
-          break;
-        }
-      }
-
-      if (endWithResult) {
-        let functionResponse = this._callFunction(functionName, functionArgs, argsOrder);
-        if (typeof functionResponse === "string") {
-          functionResponse = { text: functionResponse };
-        }
-        return result;
-      } else if (onlyReturnArguments) {
-        return functionArgs;
-      } else {
-        let functionResponse = this._callFunction(functionName, functionArgs, argsOrder);
-        if (typeof functionResponse === "string") {
-          functionResponse = { content: functionResponse };
-        }
-
-        // Inform the chat that the function has been called
-        functionParts.push({
-          "role": "model",
-          "parts": [{
-            "functionCall": {
-              "name": functionName,
-              "args": functionArgs
-            }
-          }]
-        });
-
-        functionParts.push({
-          "role": "function",
-          "parts": [{
-            "functionResponse": {
-              "name": functionName,
-              "response": functionResponse
-            }
-          }]
-        });
-      }
-      return this.sendMessage(functionParts, true)
-    } else if (
+    if (
       result.response.candidates &&
-      result.response.candidates.length > 0
+      result.response.candidates.length > 0 &&
+      result.response.candidates[0]?.content !== undefined
     ) {
-      this._history.push(newContent);
+      this._history.push(newContent)
       const responseContent = {
         parts: [],
+        // Response seems to come back without a role set.
         role: "model",
-        ...result.response.candidates?.[0].content,
-      };
-      this._history.push(responseContent);
+        ...result.response.candidates?.[0].content
+      }
+      this._history.push(responseContent)
     } else {
-      const blockErrorMessage = super._formatBlockErrorMessage(result.response);
+      const blockErrorMessage = formatBlockErrorMessage(result.response)
       if (blockErrorMessage) {
         console.warn(
-          `sendMessage() was unsuccessful. ${blockErrorMessage}. Inspect response object for details.`,
-        );
+          `sendMessage() was unsuccessful. ${blockErrorMessage}. Inspect response object for details.`
+        )
       }
     }
+
     let finalResult = result;
 
     return finalResult;
@@ -566,30 +695,32 @@ class ChatSession extends _CoreFunctions {
   }
 
   _validateChatHistory(history) {
-    let prevContent;
+    let prevContent = false
     for (const currContent of history) {
-      const { role, parts } = currContent;
+      const { role, parts } = currContent
       if (!prevContent && role !== "user") {
         throw new Error(
           `First content should be with role 'user', got ${role}`
-        );
+        )
       }
       if (!POSSIBLE_ROLES.includes(role)) {
         throw new Error(
           `Each item should include role field. Got ${role} but valid roles are: ${JSON.stringify(
             POSSIBLE_ROLES
           )}`
-        );
+        )
       }
 
       if (!Array.isArray(parts)) {
         throw new Error(
           "Content should have 'parts' property with an array of Parts"
-        );
+        )
       }
 
       if (parts.length === 0) {
-        throw new Error("Each Content should have at least one part");
+        throw new Error(
+          "Each Content should have at least one part"
+        )
       }
 
       const countFields = {
@@ -597,35 +728,28 @@ class ChatSession extends _CoreFunctions {
         inlineData: 0,
         functionCall: 0,
         functionResponse: 0,
-      };
+        fileData: 0,
+        executableCode: 0,
+        codeExecutionResult: 0
+      }
 
       for (const part of parts) {
         for (const key of VALID_PART_FIELDS) {
           if (key in part) {
-            countFields[key] += 1;
+            countFields[key] += 1
           }
         }
       }
-      const validParts = VALID_PARTS_PER_ROLE[role];
+      const validParts = VALID_PARTS_PER_ROLE[role]
       for (const key of VALID_PART_FIELDS) {
         if (!validParts.includes(key) && countFields[key] > 0) {
           throw new Error(
             `Content with role '${role}' can't contain '${key}' part`
-          );
+          )
         }
       }
 
-      if (prevContent) {
-        const validPreviousContentRoles = VALID_PREVIOUS_CONTENT_ROLES[role];
-        if (!validPreviousContentRoles.includes(prevContent.role)) {
-          throw new Error(
-            `Content with role '${role}' can't follow '${prevContent.role}'. Valid previous roles: ${JSON.stringify(
-              VALID_PREVIOUS_CONTENT_ROLES
-            )}`
-          );
-        }
-      }
-      prevContent = currContent;
+      prevContent = true
     }
   }
 }
@@ -680,6 +804,20 @@ const HarmProbability = Object.freeze({
 });
 
 /**
+ * Contains the list of OpenAPI data types
+ * as defined by https://swagger.io/docs/specification/data-models/data-types/
+ * @public
+ */
+const SchemaType = Object.freeze({
+  STRING: "string",
+  NUMBER: "number",
+  INTEGER: "integer",
+  BOOLEAN: "boolean",
+  ARRAY: "array",
+  OBJECT: "object"
+});
+
+/**
  * Reason that a prompt was blocked.
  * @public
  */
@@ -711,18 +849,16 @@ const VALID_PART_FIELDS = [
   "inlineData",
   "functionCall",
   "functionResponse",
+  "executableCode",
+  "codeExecutionResult",
 ];
 
 const VALID_PARTS_PER_ROLE = Object.freeze({
   user: ["text", "inlineData"],
   function: ["functionResponse"],
-  model: ["text", "functionCall"],
-});
-
-const VALID_PREVIOUS_CONTENT_ROLES = Object.freeze({
-  user: ["model"],
-  function: ["model"],
-  model: ["user", "function"],
+  model: ["text", "functionCall", "executableCode", "codeExecutionResult"],
+  // System instructions shouldn't be in history anyway.
+  system: ["text"],
 });
 
 
@@ -846,7 +982,8 @@ class _FunctionObject {
     }
 
     this.addParameters = function (params) {
-      parameters = params;
+      properties = params?.properties;
+      required = params?.required || []
       return this;
     }
 
