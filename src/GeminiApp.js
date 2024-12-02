@@ -31,92 +31,100 @@ class _CoreFunctions {
   constructor() {
   }
 
-  _countTokens(auth, model, params) {
-    const url = new RequestUrl(model, Task.COUNT_TOKENS, auth, false, {});
-    const response = this._makeRequest(
-      url,
-      JSON.stringify({ ...params, model })
-    );
-    return response;
+  _countTokens(auth, model, params, singleRequestOptions) {
+    // modify the request if vertex ai
+    if (!auth.apiKey) {
+      params = params.generateContentRequest
+    }
+    const response = this._makeModelRequest(
+      model,
+      Task.COUNT_TOKENS,
+      auth,
+      false,
+      params,
+      singleRequestOptions
+    )
+    return response
   };
 
   _generateContent(auth, model, params, requestOptions) {
-    const url = new RequestUrl(
+
+    const response = this._makeModelRequest(
       model,
       Task.GENERATE_CONTENT,
       auth,
     /* stream */ false,
+      params,
       requestOptions
-    );
-    const responseJson = this._makeRequest(
-      url,
-      JSON.stringify(params)
-    );
-    return { response: this._addHelpers(responseJson) };
+    )
+    const responseJson = response
+    const enhancedResponse = this._addHelpers(responseJson)
+    return {
+      response: enhancedResponse
+    }
   };
 
-  _makeRequest(
-    url,
-    body
-  ) {
-
-    const maxRetries = 5;
-    let retries = 0;
-    let success = false;
-
-    let options = {
-      'method': 'POST',
-      'contentType': 'application/json',
-      'muteHttpExceptions': true,
-      'headers': {},
-      'payload': body
-    };
-
+  _getHeaders(url) {
+    const headers = {};
     if (url.apiKey) {
-      options.headers = { 'X-Goog-Api-Key': url.apiKey };
+      headers['X-Goog-Api-Key'] = url.apiKey;
     } else if (url._auth?.type === 'service_account') {
       const credentials = this._credentialsForVertexAI(url._auth);
-      options.headers = { 'Authorization': `Bearer ${credentials.accessToken}` }
+      headers['Authorization'] = `Bearer ${credentials.accessToken}`
     } else {
-      options.headers = { 'Authorization': `Bearer ${ScriptApp.getOAuthToken()}` };
+      headers['Authorization'] = `Bearer ${ScriptApp.getOAuthToken()}`;
     }
+    return headers
+  }
 
-    let response;
-    while (retries < maxRetries && !success) {
-      response = UrlFetchApp.fetch(url, options);
-      let responseCode = response.getResponseCode();
+  _constructModelRequest(
+    model,
+    task,
+    auth,
+    stream,
+    body,
+    requestOptions
+  ) {
+    const url = new RequestUrl(model, task, auth, stream, requestOptions);
 
-      if (responseCode === 200) {
-        // The request was successful, exit the loop.
-        response = JSON.parse(response.getContentText());
-        success = true;
-      }
-      else if (responseCode === 429) {
-        // Rate limit reached, wait before retrying.
-        let delay = Math.pow(2, retries) * 1000; // Delay in milliseconds, starting at 1 second.
-        console.warn(`Rate limit reached when calling Gemini API, automatically retrying in ${delay / 1000} seconds.`);
-        Utilities.sleep(delay);
-        retries++;
-      }
-      else if (responseCode >= 500) {
-        // The server is temporarily unavailable, wait before retrying.
-        let delay = Math.pow(2, retries) * 1000; // Delay in milliseconds, starting at 1 second.
-        console.warn(`Gemini API returned ${responseCode} error, automatically retrying in ${delay / 1000} seconds.`);
-        Utilities.sleep(delay);
-        retries++;
-      }
-      else {
-        // The request failed for another reason, log the error and exit the loop.
-        console.error(`Request to Gemini failed with response code ${responseCode} - ${response.getContentText()}`);
-        break;
+    return {
+      url: url.toString(),
+      fetchOptions: {
+        ...this._buildFetchOptions(requestOptions),
+        'method': "POST",
+        'contentType': 'application/json',
+        'muteHttpExceptions': true,
+        'headers': this._getHeaders(url),
+        'payload': this._removeEmptyParams(body)
       }
     }
+  }
 
-    if (!success) {
-      throw new Error(`Failed to call Gemini API after ${retries} retries.`);
-    }
-    return response
-  };
+  _makeModelRequest(
+    model,
+    task,
+    auth,
+    stream,
+    body,
+    requestOptions = {},
+    // Allows this to be stubbed for tests
+    fetchFn = UrlFetchApp.fetch
+  ) {
+    const { url, fetchOptions } = this._constructModelRequest(
+      model,
+      task,
+      auth,
+      stream,
+      body,
+      requestOptions
+    )
+    return makeRequest_(url, fetchOptions, fetchFn)
+  }
+
+  _buildFetchOptions(requestOptions) {
+
+    return requestOptions
+  }
 
   // @See https://github.com/googleworkspace/slides-advisor-add-on/blob/main/src/ai.js
   _credentialsForVertexAI(auth) {
@@ -181,12 +189,19 @@ class _CoreFunctions {
       }
     } else {
       // Array or string
-      const content = formatNewContent(params)
+      const content = this._formatNewContent(params)
       formattedGenerateContentRequest.contents = [content]
     }
     return { generateContentRequest: formattedGenerateContentRequest }
   }
 
+  _removeEmptyParams(params) {
+    return JSON.stringify(
+      Object.fromEntries(
+        Object.entries(params).filter(([_, v]) => v != null && (!Array.isArray(v) || v.length > 0))
+      )
+    );
+  }
 
   _formatNewContent(request) {
     let newParts = [];
@@ -239,13 +254,13 @@ class _CoreFunctions {
     }
 
     if (hasUserContent && hasFunctionContent) {
-      throw new Error(
+      throw new GoogleGenerativeAIError(
         "Within a single message, FunctionResponse cannot be mixed with other type of part in the request for sending chat message."
       )
     }
 
     if (!hasUserContent && !hasFunctionContent) {
-      throw new Error(
+      throw new GoogleGenerativeAIError(
         "No content is provided for sending chat message."
       )
     }
@@ -268,14 +283,14 @@ class _CoreFunctions {
           )
         }
         if (this._hadBadFinishReason(response.candidates[0])) {
-          throw new Error(
+          throw new GoogleGenerativeAIResponseError(
             `${this._formatBlockErrorMessage(response)}`,
             response
           )
         }
         return this._getText(response)
       } else if (response.promptFeedback) {
-        throw new Error(
+        throw new GoogleGenerativeAIResponseError(
           `Text not available. ${this._formatBlockErrorMessage(response)}`,
           response
         )
@@ -295,7 +310,7 @@ class _CoreFunctions {
           )
         }
         if (this._hadBadFinishReason(response.candidates[0])) {
-          throw new Error(
+          throw new GoogleGenerativeAIResponseError(
             `${this._formatBlockErrorMessage(response)}`,
             response
           )
@@ -306,7 +321,7 @@ class _CoreFunctions {
         )
         return this._getFunctionCalls(response)[0]
       } else if (response.promptFeedback) {
-        throw new Error(
+        throw new GoogleGenerativeAIResponseError(
           `Function call not available. ${this._formatBlockErrorMessage(response)}`,
           response
         )
@@ -323,14 +338,14 @@ class _CoreFunctions {
           )
         }
         if (this._hadBadFinishReason(response.candidates[0])) {
-          throw new Error(
+          throw new GoogleGenerativeAIResponseError(
             `${this._formatBlockErrorMessage(response)}`,
             response
           )
         }
         return this._getFunctionCalls(response)
       } else if (response.promptFeedback) {
-        throw new Error(
+        throw new GoogleGenerativeAIResponseError(
           `Function call not available. ${this._formatBlockErrorMessage(response)}`,
           response
         )
@@ -402,8 +417,8 @@ class _CoreFunctions {
       FinishReason.SAFETY,
       FinishReason.RECITATION,
       FinishReason.LANGUAGE,
-      FinishReason.BLOCKLIST, 
-      FinishReason.PROHIBITED_CONTENT ,
+      FinishReason.BLOCKLIST,
+      FinishReason.PROHIBITED_CONTENT,
       FinishReason.SPII,
       FinishReason.MALFORMED_FUNCTION_CALL,
       FinishReason.OTHER
@@ -494,6 +509,7 @@ class _GoogleGenerativeAI {
  * @param {string} [options.model] - The model to use (defaults to '').
  */
 var GeminiApp = _GoogleGenerativeAI;
+var GoogleGenerativeAI = _GoogleGenerativeAI;
 
 
 class _GenerativeModel extends _CoreFunctions {
@@ -541,7 +557,6 @@ class _GenerativeModel extends _CoreFunctions {
   }
 
   countTokens(request, requestOptions = {}) {
-    //const formattedParams = super._formatGenerateContentInput(request);
     const formattedParams = super._formatCountTokensInput(request, {
       model: this.model,
       generationConfig: this.generationConfig,
@@ -767,12 +782,12 @@ class ChatSession extends _CoreFunctions {
     for (const currContent of history) {
       const { role, parts } = currContent
       if (!prevContent && role !== "user") {
-        throw new Error(
+        throw new GoogleGenerativeAIError(
           `First content should be with role 'user', got ${role}`
         )
       }
       if (!POSSIBLE_ROLES.includes(role)) {
-        throw new Error(
+        throw new GoogleGenerativeAIError(
           `Each item should include role field. Got ${role} but valid roles are: ${JSON.stringify(
             POSSIBLE_ROLES
           )}`
@@ -780,13 +795,13 @@ class ChatSession extends _CoreFunctions {
       }
 
       if (!Array.isArray(parts)) {
-        throw new Error(
+        throw new GoogleGenerativeAIError(
           "Content should have 'parts' property with an array of Parts"
         )
       }
 
       if (parts.length === 0) {
-        throw new Error(
+        throw new GoogleGenerativeAIError(
           "Each Content should have at least one part"
         )
       }
@@ -811,7 +826,7 @@ class ChatSession extends _CoreFunctions {
       const validParts = VALID_PARTS_PER_ROLE[role]
       for (const key of VALID_PART_FIELDS) {
         if (!validParts.includes(key) && countFields[key] > 0) {
-          throw new Error(
+          throw new GoogleGenerativeAIError(
             `Content with role '${role}' can't contain '${key}' part`
           )
         }
@@ -827,7 +842,8 @@ class ChatSession extends _CoreFunctions {
  */
 var BASE_URL_STUDIO = "https://generativelanguage.googleapis.com";
 var BASE_URL_VERTEX = "https://{REGION}-aiplatform.googleapis.com/{apiVersion}/projects/{PROJECT_ID}/locations/{REGION}/publishers/google";
-var DEFAULT_API_VERSION = "v1";
+var DEFAULT_API_VERSION_STUDIO = "v1beta";
+var DEFAULT_API_VERSION_VERTEX = "v1";
 
 /**
  * import from https://github.com/google/generative-ai-js/blob/main/packages/main/types/enums.ts
@@ -928,6 +944,15 @@ const FinishReason = Object.freeze({
   OTHER: "OTHER",
 });
 
+const RpcTask = Object.freeze({
+  UPLOAD: "upload",
+  LIST: "list",
+  GET: "get",
+  DELETE: "delete",
+  UPDATE: "update",
+  CREATE: "create",
+})
+
 const VALID_PART_FIELDS = [
   "text",
   "inlineData",
@@ -945,6 +970,47 @@ const VALID_PARTS_PER_ROLE = Object.freeze({
   system: ["text"],
 });
 
+/**
+ * Basic error type for this SDK.
+ * @public
+ */
+class GoogleGenerativeAIError extends Error {
+  constructor(message) {
+    super(`[GoogleGenerativeAI Error]: ${message}`)
+  }
+}
+
+/**
+ * Errors in the contents of a response from the model. This includes parsing
+ * errors, or responses including a safety block reason.
+ * @public
+ */
+class GoogleGenerativeAIResponseError extends GoogleGenerativeAIError {
+  constructor(message, response) {
+    super(message)
+    this.response = response
+  }
+}
+
+/**
+ * Error class covering HTTP errors when calling the server. Includes HTTP
+ * status, statusText, and optional details, if provided in the server response.
+ * @public
+ */
+class GoogleGenerativeAIFetchError extends GoogleGenerativeAIError {
+  constructor(message, status, statusText, errorDetails) {
+    super(message)
+    this.status = status
+    this.statusText = statusText
+    this.errorDetails = errorDetails
+  }
+}
+
+/**
+ * Errors in the contents of a request originating from user input.
+ * @public
+ */
+class GoogleGenerativeAIRequestInputError extends GoogleGenerativeAIError { }
 
 class RequestUrl {
   constructor(model, task, auth, stream = false, requestOptions) {
@@ -957,17 +1023,15 @@ class RequestUrl {
   }
   toString() {
     let url = '';
-    const apiVersion = this.requestOptions?.apiVersion || DEFAULT_API_VERSION;
+    let apiVersion = this.requestOptions?.apiVersion || DEFAULT_API_VERSION_VERTEX;
 
     if (this._auth.region && this._auth.project_id) {
       const replacementMap = { REGION: this._auth.region, PROJECT_ID: this._auth.project_id, apiVersion: apiVersion }
       url = BASE_URL_VERTEX.replace(/\{(\w+)\}/g, (match, key) => replacementMap[key] || match) + `/${this.model}:${this.task}`;
     } else {
+      apiVersion = this.requestOptions?.apiVersion || DEFAULT_API_VERSION_STUDIO;
       url = `${BASE_URL_STUDIO}/${apiVersion}/${this.model}:${this.task}`
     }
-    // if (this.stream) {
-    //   url += "?alt=sse"
-    // }
     return url
   }
 }
@@ -1098,27 +1162,67 @@ class _FunctionObject {
         endingFunction: endingFunction,
         onlyArgs: onlyArgs
       };
-
-      // this.toJSON = function () {
-      //   const jsonArgs = {
-      //     name: name,
-      //     description: description,
-      //     argumentsInRightOrder: argumentsInRightOrder,
-      //     endingFunction: endingFunction,
-      //     onlyArgs: onlyArgs
-      //   };
-      //   if (parameters.type) {
-      //     jsonArgs.parameters = parameters
-      //   } else {
-      //     jsonArgs.parameters = {
-      //       type: "OBJECT",
-      //       properties: properties,
-      //       required: required,
-      //       //nullable: false
-      //     }
-      //   }
-      return jsonArgs;
     }
   }
 }
 var FunctionObject = _FunctionObject;
+
+class ServerRequestUrl {
+  constructor(task, auth, requestOptions) { // Take auth object
+    this.task = task;
+    this._auth = auth; // Store auth object
+    this.requestOptions = requestOptions;
+  }
+
+  appendPath(path) {
+    this._url.pathname = this._url.pathname + `/${path}`;
+  }
+
+  appendParam(key, value) {
+    this._url.searchParams.append(key, value);
+  }
+
+  toString() {
+    return this._url.toString();
+  }
+}
+
+function makeRequest_(url, fetchOptions, fetchFn = UrlFetchApp.fetch) {
+  const maxRetries = 5;
+  let retries = 0;
+  let success = false;
+
+  let response;
+  while (retries < maxRetries && !success) {
+    response = fetchFn(url, fetchOptions);
+    let responseCode = response.getResponseCode();
+
+    if (responseCode === 200) {
+      response = JSON.parse(response.getContentText());
+      success = true;
+    } else if ([401, 403].includes(responseCode) && this._auth?.type === 'service_account') {
+      // Refresh access token for 401/403 errors with service account.
+      this._credentialsForVertexAI();
+      fetchOptions.headers['Authorization'] = 'Bearer ' + this._credentialsForVertexAI().accessToken;
+      retries++;
+    } else if (responseCode === 429) {
+      let delay = Math.pow(2, retries) * 1000;
+      console.warn(`Rate limit reached, retrying in ${delay / 1000} seconds.`);
+      Utilities.sleep(delay);
+      retries++;
+    } else if (responseCode >= 500) {
+      let delay = Math.pow(2, retries) * 1000;
+      console.warn(`Server error ${responseCode}, retrying in ${delay / 1000} seconds.`);
+      Utilities.sleep(delay);
+      retries++;
+    } else {
+      console.error(`Request failed with code ${responseCode} - ${response.getContentText()}`);
+      throw new Error(`Request failed with code ${responseCode}`); // Throw an error to stop execution.
+    }
+  }
+
+  if (!success) {
+    throw new Error(`Failed after ${retries} retries.`);
+  }
+  return response;
+}
