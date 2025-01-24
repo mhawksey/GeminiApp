@@ -18,7 +18,7 @@ The GeminiApp is a comprehensive Google Apps Script library that allows integrat
 
 *   **Improved Token Management & Efficiency (New):**
     *   **Token Management:** Count tokens in prompts, chat histories, and responses, including cached content, giving you granular control over your API usage and costs.
-    *   **Caching:** Improve efficiency and reduce token usage by caching responses from PDF content.  This lets you process the same document multiple times without incurring the full token cost each time.
+    *   **Caching:** Improve efficiency and reduce token usage by caching responses with file uploads.  This lets you process the same document multiple times without incurring the full token cost each time.
 
 *   **Multimodal Input (Expanded):**
     *   **Multimodal Input**: Process text, images, and **PDF** files to generate rich, contextual responses. PDF support is a new feature allowing you to easily process document content.
