@@ -9,7 +9,7 @@
 
 /**
  * @license
- * Copyright 2024 Martin Hawksey
+ * Copyright 2025 Martin Hawksey
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -31,92 +31,99 @@ class _CoreFunctions {
   constructor() {
   }
 
-  _countTokens(auth, model, params) {
-    const url = new RequestUrl(model, Task.COUNT_TOKENS, auth, false, {});
-    const response = this._makeRequest(
-      url,
-      JSON.stringify({ ...params, model })
-    );
-    return response;
+  _countTokens(auth, model, params, singleRequestOptions) {
+    // modify the request if vertex ai
+    if (!auth.apiKey) {
+      params = params.generateContentRequest
+    }
+    const response = this._makeModelRequest(
+      model,
+      Task.COUNT_TOKENS,
+      auth,
+      false,
+      params,
+      singleRequestOptions
+    )
+    return response
   };
 
   _generateContent(auth, model, params, requestOptions) {
-    const url = new RequestUrl(
+
+    const response = this._makeModelRequest(
       model,
       Task.GENERATE_CONTENT,
       auth,
     /* stream */ false,
+      params,
       requestOptions
-    );
-    const responseJson = this._makeRequest(
-      url,
-      JSON.stringify(params)
-    );
-    return { response: this._addHelpers(responseJson) };
+    )
+    const responseJson = response
+    const enhancedResponse = this._addHelpers(responseJson)
+    return {
+      response: enhancedResponse
+    }
   };
 
-  _makeRequest(
-    url,
-    body
-  ) {
-
-    const maxRetries = 5;
-    let retries = 0;
-    let success = false;
-
-    let options = {
-      'method': 'POST',
-      'contentType': 'application/json',
-      'muteHttpExceptions': true,
-      'headers': {},
-      'payload': body
-    };
-
+  _getHeaders(url) {
+    const headers = {};
     if (url.apiKey) {
-      options.headers = { 'X-Goog-Api-Key': url.apiKey };
+      headers['X-Goog-Api-Key'] = url.apiKey;
     } else if (url._auth?.type === 'service_account') {
       const credentials = this._credentialsForVertexAI(url._auth);
-      options.headers = { 'Authorization': `Bearer ${credentials.accessToken}` }
+      headers['Authorization'] = `Bearer ${credentials.accessToken}`
     } else {
-      options.headers = { 'Authorization': `Bearer ${ScriptApp.getOAuthToken()}` };
+      headers['Authorization'] = `Bearer ${ScriptApp.getOAuthToken()}`;
     }
+    return headers
+  }
 
-    let response;
-    while (retries < maxRetries && !success) {
-      response = UrlFetchApp.fetch(url, options);
-      let responseCode = response.getResponseCode();
+  _constructModelRequest(
+    model,
+    task,
+    auth,
+    stream,
+    body,
+    requestOptions
+  ) {
+    const url = new RequestUrl(model, task, auth, stream, requestOptions);
 
-      if (responseCode === 200) {
-        // The request was successful, exit the loop.
-        response = JSON.parse(response.getContentText());
-        success = true;
-      }
-      else if (responseCode === 429) {
-        // Rate limit reached, wait before retrying.
-        let delay = Math.pow(2, retries) * 1000; // Delay in milliseconds, starting at 1 second.
-        console.warn(`Rate limit reached when calling Gemini API, automatically retrying in ${delay/1000} seconds.`);
-        Utilities.sleep(delay);
-        retries++;
-      }
-      else if (responseCode >= 500) {
-        // The server is temporarily unavailable, wait before retrying.
-        let delay = Math.pow(2, retries) * 1000; // Delay in milliseconds, starting at 1 second.
-        console.warn(`Gemini API returned ${responseCode} error, automatically retrying in ${delay/1000} seconds.`);
-        Utilities.sleep(delay);
-        retries++;
-      }
-      else {
-        // The request failed for another reason, log the error and exit the loop.
-        console.error(`Request to Gemini failed with response code ${responseCode} - ${response.getContentText()}`);
-        break;
+    return {
+      url: url.toString(),
+      fetchOptions: {
+        ...this._buildFetchOptions(requestOptions),
+        'method': "POST",
+        'contentType': 'application/json',
+        'headers': this._getHeaders(url),
+        'payload': this._removeEmptyParams(body)
       }
     }
+  }
 
-    if (!success) {
-      throw new Error(`Failed to call Gemini API after ${retries} retries.`);
-    }
-    return response
-  };
+  _makeModelRequest(
+    model,
+    task,
+    auth,
+    stream,
+    body,
+    requestOptions = {},
+    // Allows this to be stubbed for tests
+    fetchFn = UrlFetchApp.fetch
+  ) {
+    const { url, fetchOptions } = this._constructModelRequest(
+      model,
+      task,
+      auth,
+      stream,
+      body,
+      requestOptions
+    )
+    return makeRequest_(url, fetchOptions, fetchFn)
+  }
+
+  _buildFetchOptions(requestOptions) {
+
+    return requestOptions
+  }
 
   // @See https://github.com/googleworkspace/slides-advisor-add-on/blob/main/src/ai.js
   _credentialsForVertexAI(auth) {
@@ -129,22 +136,70 @@ class _CoreFunctions {
         .setCache(CacheService.getScriptCache())
         .setScope("https://www.googleapis.com/auth/cloud-platform");
       return { accessToken: service.getAccessToken() }
-    } catch(e) {
+    } catch (e) {
       console.error(e)
     }
   }
 
-/**
- * Import from https://github.com/google/generative-ai-js/blob/main/packages/main/src/requests/request-helpers.ts
- */
+  /**
+   * Import from https://github.com/google/generative-ai-js/blob/main/packages/main/src/requests/request-helpers.ts
+   */
 
   _formatGenerateContentInput(params) {
+    let formattedRequest
     if (params.contents) {
-      return params
+      formattedRequest = params
     } else {
+      // Array or string
       const content = this._formatNewContent(params)
-      return { contents: [content] }
+      formattedRequest = { contents: [content] }
     }
+    if (params.systemInstruction) {
+      formattedRequest.systemInstruction = this._formatSystemInstruction(
+        params.systemInstruction
+      )
+    }
+    return formattedRequest
+  }
+
+  _formatCountTokensInput(params, modelParams) {
+    let formattedGenerateContentRequest = {
+      model: modelParams?.model,
+      generationConfig: modelParams?.generationConfig,
+      safetySettings: modelParams?.safetySettings,
+      tools: modelParams?.tools,
+      toolConfig: modelParams?.toolConfig,
+      systemInstruction: modelParams?.systemInstruction,
+      cachedContent: modelParams?.cachedContent?.name,
+      contents: []
+    }
+    const containsGenerateContentRequest = params.generateContentRequest != null
+    if (params.contents) {
+      if (containsGenerateContentRequest) {
+        throw new GoogleGenerativeAIRequestInputError(
+          "CountTokensRequest must have one of contents or generateContentRequest, not both."
+        )
+      }
+      formattedGenerateContentRequest.contents = params.contents
+    } else if (containsGenerateContentRequest) {
+      formattedGenerateContentRequest = {
+        ...formattedGenerateContentRequest,
+        ...params.generateContentRequest
+      }
+    } else {
+      // Array or string
+      const content = this._formatNewContent(params)
+      formattedGenerateContentRequest.contents = [content]
+    }
+    return { generateContentRequest: formattedGenerateContentRequest }
+  }
+
+  _removeEmptyParams(params) {
+    return JSON.stringify(
+      Object.fromEntries(
+        Object.entries(params).filter(([_, v]) => v != null && (!Array.isArray(v) || v.length > 0))
+      )
+    );
   }
 
   _formatNewContent(request) {
@@ -163,6 +218,25 @@ class _CoreFunctions {
     return this._assignRoleToPartsAndValidateSendMessageRequest(newParts)
   }
 
+  _formatSystemInstruction(input) {
+    if (input == null) {
+      return undefined
+    } else if (typeof input === "string") {
+      return {
+        role: "system",
+        parts: [{ text: input }]
+      }
+    } else if (input.text) {
+      return { role: "system", parts: [input] }
+    } else if (input.parts) {
+      if (!input.role) {
+        return { role: "system", parts: input.parts }
+      } else {
+        return input
+      }
+    }
+  }
+
   _assignRoleToPartsAndValidateSendMessageRequest(parts) {
     const userContent = { role: "user", parts: [] }
     const functionContent = { role: "function", parts: [] }
@@ -179,13 +253,13 @@ class _CoreFunctions {
     }
 
     if (hasUserContent && hasFunctionContent) {
-      throw new Error(
+      throw new GoogleGenerativeAIError(
         "Within a single message, FunctionResponse cannot be mixed with other type of part in the request for sending chat message."
       )
     }
 
     if (!hasUserContent && !hasFunctionContent) {
-      throw new Error(
+      throw new GoogleGenerativeAIError(
         "No content is provided for sending chat message."
       )
     }
@@ -198,40 +272,86 @@ class _CoreFunctions {
   }
 
   _addHelpers(response) {
-    if (response.candidates && response.candidates.length > 0) {
-      if (response.candidates.length > 1) {
-        console.warn(
-          `This response had ${response.candidates.length} ` +
-          `candidates. Returning text from the first candidate only. ` +
-          `Access response.candidates directly to use the other candidates.`
-        )
-      }
-      if (response.candidates[0].finishReason === "MAX_TOKENS") {
-        console.warn(
-          `Gemini response has been troncated because it was too long. To resolve this issue, you can increase the maxOutputTokens property.`
-        );
-
-      }
-      if (this._hadBadFinishReason(response.candidates[0])) {
-        throw new Error(
-          `${this._formatBlockErrorMessage(response)}`,
+    response.text = () => {
+      if (response.candidates && response.candidates.length > 0) {
+        if (response.candidates.length > 1) {
+          console.warn(
+            `This response had ${response.candidates.length} ` +
+            `candidates. Returning text from the first candidate only. ` +
+            `Access response.candidates directly to use the other candidates.`
+          )
+        }
+        if (this._hadBadFinishReason(response.candidates[0])) {
+          throw new GoogleGenerativeAIResponseError(
+            `${this._formatBlockErrorMessage(response)}`,
+            response
+          )
+        }
+        return this._getText(response)
+      } else if (response.promptFeedback) {
+        throw new GoogleGenerativeAIResponseError(
+          `Text not available. ${this._formatBlockErrorMessage(response)}`,
           response
         )
       }
-    } else if (response.promptFeedback) {
-      throw new Error(
-        `Text not available. ${this._formatBlockErrorMessage(response)}`,
-        response
-      )
+      return ""
+    }
+    /**
+     * TODO: remove at next major version
+     */
+    response.functionCall = () => {
+      if (response.candidates && response.candidates.length > 0) {
+        if (response.candidates.length > 1) {
+          console.warn(
+            `This response had ${response.candidates.length} ` +
+            `candidates. Returning function calls from the first candidate only. ` +
+            `Access response.candidates directly to use the other candidates.`
+          )
+        }
+        if (this._hadBadFinishReason(response.candidates[0])) {
+          throw new GoogleGenerativeAIResponseError(
+            `${this._formatBlockErrorMessage(response)}`,
+            response
+          )
+        }
+        console.warn(
+          `response.functionCall() is deprecated. ` +
+          `Use response.functionCalls() instead.`
+        )
+        return this._getFunctionCalls(response)[0]
+      } else if (response.promptFeedback) {
+        throw new GoogleGenerativeAIResponseError(
+          `Function call not available. ${this._formatBlockErrorMessage(response)}`,
+          response
+        )
+      }
+      return undefined
+    }
+    response.functionCalls = () => {
+      if (response.candidates && response.candidates.length > 0) {
+        if (response.candidates.length > 1) {
+          console.warn(
+            `This response had ${response.candidates.length} ` +
+            `candidates. Returning function calls from the first candidate only. ` +
+            `Access response.candidates directly to use the other candidates.`
+          )
+        }
+        if (this._hadBadFinishReason(response.candidates[0])) {
+          throw new GoogleGenerativeAIResponseError(
+            `${this._formatBlockErrorMessage(response)}`,
+            response
+          )
+        }
+        return this._getFunctionCalls(response)
+      } else if (response.promptFeedback) {
+        throw new GoogleGenerativeAIResponseError(
+          `Function call not available. ${this._formatBlockErrorMessage(response)}`,
+          response
+        )
+      }
+      return undefined
     }
 
-    response.text = function () {
-      if (response.candidates?.[0].content?.parts?.[0]?.text) {
-        return response.candidates[0].content.parts.map(({ text }) => text).join("");
-      } else {
-        return "";
-      }
-    };
 
     response.json = function () {
       if (response.candidates?.[0].content?.parts?.[0]?.text) {
@@ -240,20 +360,68 @@ class _CoreFunctions {
         return "";
       }
     };
-
-    response.getFunctionCall = function () {
-      if (response.candidates?.[0].content?.parts?.[0]?.functionCall) {
-        return response.candidates?.[0].content?.parts?.[0]?.functionCall;
-      } else {
-        return "";
-      }
-    };
-
     return response
   }
 
+  _getText(response) {
+    const textStrings = []
+    if (response.candidates?.[0].content?.parts) {
+      for (const part of response.candidates?.[0].content?.parts) {
+        if (part.text) {
+          textStrings.push(part.text)
+        }
+        if (part.executableCode) {
+          textStrings.push(
+            "\n```" +
+            part.executableCode.language +
+            "\n" +
+            part.executableCode.code +
+            "\n```\n"
+          )
+        }
+        if (part.codeExecutionResult) {
+          textStrings.push(
+            "\n```\n" + part.codeExecutionResult.output + "\n```\n"
+          )
+        }
+      }
+    }
+    if (textStrings.length > 0) {
+      return textStrings.join("")
+    } else {
+      return ""
+    }
+  }
+
+  _getFunctionCalls(response) {
+    const functionCalls = []
+    if (response.candidates?.[0].content?.parts) {
+      for (const part of response.candidates?.[0].content?.parts) {
+        if (part.functionCall) {
+          functionCalls.push(part.functionCall)
+        }
+      }
+    }
+    if (functionCalls.length > 0) {
+      return functionCalls
+    } else {
+      return undefined
+    }
+  }
+
   _hadBadFinishReason(candidate) {
-    const badFinishReasons = [FinishReason.RECITATION, FinishReason.SAFETY, FinishReason.OTHER]
+    const badFinishReasons = [
+      FinishReason.FINISH_REASON_UNSPECIFIED,
+      FinishReason.MAX_TOKENS,
+      FinishReason.SAFETY,
+      FinishReason.RECITATION,
+      FinishReason.LANGUAGE,
+      FinishReason.BLOCKLIST,
+      FinishReason.PROHIBITED_CONTENT,
+      FinishReason.SPII,
+      FinishReason.MALFORMED_FUNCTION_CALL,
+      FinishReason.OTHER
+    ];
     return (
       !!candidate.finishReason &&
       badFinishReasons.includes(candidate.finishReason)
@@ -328,6 +496,70 @@ class _GoogleGenerativeAI {
     }
     return new GenerativeModel(this._auth, modelParams, requestOptions);
   }
+
+  /**
+ * Creates a {@link GenerativeModel} instance from provided content cache.
+ */
+  getGenerativeModelFromCachedContent(
+    cachedContent,
+    modelParams,
+    requestOptions
+  ) {
+    if (!cachedContent.name) {
+      throw new GoogleGenerativeAIRequestInputError(
+        "Cached content must contain a `name` field."
+      )
+    }
+    if (!cachedContent.model) {
+      throw new GoogleGenerativeAIRequestInputError(
+        "Cached content must contain a `model` field."
+      )
+    }
+
+    /**
+     * Not checking tools and toolConfig for now as it would require a deep
+     * equality comparison and isn't likely to be a common case.
+     */
+    const disallowedDuplicates = ["model", "systemInstruction"]
+
+    for (const key of disallowedDuplicates) {
+      if (
+        modelParams?.[key] &&
+        cachedContent[key] &&
+        modelParams?.[key] !== cachedContent[key]
+      ) {
+        if (key === "model") {
+          const modelParamsComp = modelParams.model.startsWith("models/")
+            ? modelParams.model.replace("models/", "")
+            : modelParams.model
+          const cachedContentComp = cachedContent.model.startsWith("models/")
+            ? cachedContent.model.replace("models/", "")
+            : cachedContent.model
+          if (modelParamsComp === cachedContentComp) {
+            continue
+          }
+        }
+        throw new GoogleGenerativeAIRequestInputError(
+          `Different value for "${key}" specified in modelParams` +
+          ` (${modelParams[key]}) and cachedContent (${cachedContent[key]})`
+        )
+      }
+    }
+
+    const modelParamsFromCache = {
+      ...modelParams,
+      model: cachedContent.model,
+      tools: cachedContent.tools,
+      toolConfig: cachedContent.toolConfig,
+      systemInstruction: cachedContent.systemInstruction,
+      cachedContent
+    }
+    return new GenerativeModel(
+      this._auth,
+      modelParamsFromCache,
+      requestOptions
+    )
+  }
 }
 /* @constructor
  * @param {Object|string} options - Configuration options for the class instance.
@@ -340,25 +572,37 @@ class _GoogleGenerativeAI {
  * @param {string} [options.model] - The model to use (defaults to '').
  */
 var GeminiApp = _GoogleGenerativeAI;
+var GoogleGenerativeAI = _GoogleGenerativeAI;
 
 
 class _GenerativeModel extends _CoreFunctions {
   constructor(auth, modelParams, requestOptions) {
     super();
     this._auth = auth;
-    this.model = this.determineModelPath(modelParams.model);
-    this.generationConfig = modelParams.generationConfig || {}
-    this.safetySettings = modelParams.safetySettings || []
-    this.tools = modelParams.tools
-    this.requestOptions = requestOptions || {}
+    this._requestOptions = requestOptions
+    if (modelParams.model.includes("/")) {
+      // Models may be named "models/model-name" or "tunedModels/model-name"
+      this.model = modelParams.model
+    } else {
+      // If path is not included, assume it's a non-tuned model.
+      this.model = `models/${modelParams.model}`
+    }
+    this.generationConfig = modelParams.generationConfig || {};
+    this.safetySettings = modelParams.safetySettings || [];
+    this.tools = modelParams.tools;
+    this.toolConfig = modelParams.toolConfig;
+    this.systemInstruction = this._formatSystemInstruction(
+      modelParams.systemInstruction
+    )
+    this.cachedContent = modelParams.cachedContent
   }
 
-  determineModelPath(model) {
-    return model.includes("/") ? model : `models/${model}`;
-  }
-
-  generateContent(request) {
+  generateContent(request, requestOptions = {}) {
     const formattedParams = super._formatGenerateContentInput(request);
+    const generativeModelRequestOptions = {
+      ...this._requestOptions,
+      ...requestOptions
+    }
     return super._generateContent(
       this._auth,
       this.model,
@@ -366,17 +610,34 @@ class _GenerativeModel extends _CoreFunctions {
         generationConfig: this.generationConfig,
         safetySettings: this.safetySettings,
         tools: this.tools,
+        toolConfig: this.toolConfig,
+        systemInstruction: this.systemInstruction,
+        cachedContent: this.cachedContent?.name,
         ...formattedParams
       },
-      this.requestOptions
+      generativeModelRequestOptions
     );
   }
 
-  countTokens(request) {
-    const formattedParams = super._formatGenerateContentInput(request);
-    return super._countTokens(this._auth,
+  countTokens(request, requestOptions = {}) {
+    const formattedParams = super._formatCountTokensInput(request, {
+      model: this.model,
+      generationConfig: this.generationConfig,
+      safetySettings: this.safetySettings,
+      tools: this.tools,
+      toolConfig: this.toolConfig,
+      systemInstruction: this.systemInstruction,
+      cachedContent: this.cachedContent
+    })
+    const generativeModelRequestOptions = {
+      ...this._requestOptions,
+      ...requestOptions
+    }
+    return super._countTokens(
+      this._auth,
       this.model,
-      formattedParams);
+      formattedParams,
+      generativeModelRequestOptions);
   }
 
   startChat(startChatParams) {
@@ -384,10 +645,15 @@ class _GenerativeModel extends _CoreFunctions {
       this._auth,
       this.model,
       {
+        generationConfig: this.generationConfig,
+        safetySettings: this.safetySettings,
         tools: this.tools,
-        ...startChatParams,
+        toolConfig: this.toolConfig,
+        systemInstruction: this.systemInstruction,
+        cachedContent: this.cachedContent?.name,
+        ...startChatParams
       },
-      this.requestOptions,
+      this._requestOptions,
     );
   };
 
@@ -402,7 +668,7 @@ var GenerativeModel = _GenerativeModel
 
 class ChatSession extends _CoreFunctions {
 
-  constructor(auth, model, params, requestOptions) {
+  constructor(auth, model, params, _requestOptions = {}) {
     super();
     this._auth = auth;
     this._history = [];
@@ -410,11 +676,10 @@ class ChatSession extends _CoreFunctions {
     this.model = model;
     this.params = params;
     this.tools = this.params?.tools || [];
-    this.requestOptions = requestOptions;
-
-    if (params && params.history) {
-      this._validateChatHistory(params.history);
-      this._history = params.history;
+    this._requestOptions = _requestOptions
+    if (params?.history) {
+      this._validateChatHistory(params.history)
+      this._history = params.history
     }
   }
 
@@ -427,31 +692,38 @@ class ChatSession extends _CoreFunctions {
     return this._history
   }
 
-  sendMessage(request, skipFormat = false) {
+  sendMessage(request, requestOptions = {}, skipFormat = false) {
     const newContent = (skipFormat) ? request : super._formatNewContent(request);
     const generateContentRequest = {
-      safetySettings: this.params?.safetySettings,
-      generationConfig: this.params?.generationConfig,
-      //tools: this.tools,
-      contents: [...this._history, newContent],
-    };
-    if (this.tools.length) generateContentRequest.tools = this.tools;
+      safetySettings: this?.safetySettings,
+      generationConfig: this?.generationConfig,
+      tools: this?.tools,
+      toolConfig: this?.toolConfig,
+      systemInstruction: this?.systemInstruction,
+      cachedContent: this?.cachedContent,
+      contents: [...this._history, newContent]
+    }
+
+    const chatSessionRequestOptions = {
+      ...this._requestOptions,
+      ...requestOptions
+    }
 
     const result = super._generateContent(
       this._auth,
       this.model,
       generateContentRequest,
-      this.requestOptions
+      this._requestOptions,
+      chatSessionRequestOptions
     );
-
-    let functionCall = result.response.getFunctionCall();
+    let functionCall = result.response.functionCalls();
     if (this._functions.length >> 0 && functionCall) {
       this._history.push(newContent);
       // Check if Gemini wanted to call a function
 
       let functionParts = [];
-      let functionName = functionCall.name;
-      let functionArgs = functionCall.args;
+      let functionName = functionCall[0].name;
+      let functionArgs = functionCall[0].args;
 
       let argsOrder = [];
       let endWithResult = false;
@@ -493,7 +765,7 @@ class ChatSession extends _CoreFunctions {
         });
 
         functionParts.push({
-          "role": "function",
+          "role": "user",
           "parts": [{
             "functionResponse": {
               "name": functionName,
@@ -502,26 +774,29 @@ class ChatSession extends _CoreFunctions {
           }]
         });
       }
-      return this.sendMessage(functionParts, true)
+      return this.sendMessage(functionParts, requestOptions, true)
     } else if (
       result.response.candidates &&
-      result.response.candidates.length > 0
+      result.response.candidates.length > 0 &&
+      result.response.candidates[0]?.content !== undefined
     ) {
-      this._history.push(newContent);
+      this._history.push(newContent)
       const responseContent = {
         parts: [],
+        // Response seems to come back without a role set.
         role: "model",
-        ...result.response.candidates?.[0].content,
-      };
-      this._history.push(responseContent);
+        ...result.response.candidates?.[0].content
+      }
+      this._history.push(responseContent)
     } else {
-      const blockErrorMessage = super._formatBlockErrorMessage(result.response);
+      const blockErrorMessage = formatBlockErrorMessage(result.response)
       if (blockErrorMessage) {
         console.warn(
-          `sendMessage() was unsuccessful. ${blockErrorMessage}. Inspect response object for details.`,
-        );
+          `sendMessage() was unsuccessful. ${blockErrorMessage}. Inspect response object for details.`
+        )
       }
     }
+
     let finalResult = result;
 
     return finalResult;
@@ -566,30 +841,32 @@ class ChatSession extends _CoreFunctions {
   }
 
   _validateChatHistory(history) {
-    let prevContent;
+    let prevContent = false
     for (const currContent of history) {
-      const { role, parts } = currContent;
+      const { role, parts } = currContent
       if (!prevContent && role !== "user") {
-        throw new Error(
+        throw new GoogleGenerativeAIError(
           `First content should be with role 'user', got ${role}`
-        );
+        )
       }
       if (!POSSIBLE_ROLES.includes(role)) {
-        throw new Error(
+        throw new GoogleGenerativeAIError(
           `Each item should include role field. Got ${role} but valid roles are: ${JSON.stringify(
             POSSIBLE_ROLES
           )}`
-        );
+        )
       }
 
       if (!Array.isArray(parts)) {
-        throw new Error(
+        throw new GoogleGenerativeAIError(
           "Content should have 'parts' property with an array of Parts"
-        );
+        )
       }
 
       if (parts.length === 0) {
-        throw new Error("Each Content should have at least one part");
+        throw new GoogleGenerativeAIError(
+          "Each Content should have at least one part"
+        )
       }
 
       const countFields = {
@@ -597,35 +874,28 @@ class ChatSession extends _CoreFunctions {
         inlineData: 0,
         functionCall: 0,
         functionResponse: 0,
-      };
+        fileData: 0,
+        executableCode: 0,
+        codeExecutionResult: 0
+      }
 
       for (const part of parts) {
         for (const key of VALID_PART_FIELDS) {
           if (key in part) {
-            countFields[key] += 1;
+            countFields[key] += 1
           }
         }
       }
-      const validParts = VALID_PARTS_PER_ROLE[role];
+      const validParts = VALID_PARTS_PER_ROLE[role]
       for (const key of VALID_PART_FIELDS) {
         if (!validParts.includes(key) && countFields[key] > 0) {
-          throw new Error(
+          throw new GoogleGenerativeAIError(
             `Content with role '${role}' can't contain '${key}' part`
-          );
+          )
         }
       }
 
-      if (prevContent) {
-        const validPreviousContentRoles = VALID_PREVIOUS_CONTENT_ROLES[role];
-        if (!validPreviousContentRoles.includes(prevContent.role)) {
-          throw new Error(
-            `Content with role '${role}' can't follow '${prevContent.role}'. Valid previous roles: ${JSON.stringify(
-              VALID_PREVIOUS_CONTENT_ROLES
-            )}`
-          );
-        }
-      }
-      prevContent = currContent;
+      prevContent = true
     }
   }
 }
@@ -635,7 +905,8 @@ class ChatSession extends _CoreFunctions {
  */
 var BASE_URL_STUDIO = "https://generativelanguage.googleapis.com";
 var BASE_URL_VERTEX = "https://{REGION}-aiplatform.googleapis.com/{apiVersion}/projects/{PROJECT_ID}/locations/{REGION}/publishers/google";
-var DEFAULT_API_VERSION = "v1";
+var DEFAULT_API_VERSION_STUDIO = "v1beta";
+var DEFAULT_API_VERSION_VERTEX = "v1";
 
 /**
  * import from https://github.com/google/generative-ai-js/blob/main/packages/main/types/enums.ts
@@ -680,6 +951,20 @@ const HarmProbability = Object.freeze({
 });
 
 /**
+ * Contains the list of OpenAPI data types
+ * as defined by https://swagger.io/docs/specification/data-models/data-types/
+ * @public
+ */
+const SchemaType = Object.freeze({
+  STRING: "string",
+  NUMBER: "number",
+  INTEGER: "integer",
+  BOOLEAN: "boolean",
+  ARRAY: "array",
+  OBJECT: "object"
+});
+
+/**
  * Reason that a prompt was blocked.
  * @public
  */
@@ -698,33 +983,97 @@ const Task = Object.freeze({
 });
 
 const FinishReason = Object.freeze({
+  // Default value. This value is unused.
   FINISH_REASON_UNSPECIFIED: "FINISH_REASON_UNSPECIFIED",
+  // Natural stop point of the model or provided stop sequence.
   STOP: "STOP",
+  // The maximum number of tokens as specified in the request was reached.
   MAX_TOKENS: "MAX_TOKENS",
+  // The candidate content was flagged for safety reasons.
   SAFETY: "SAFETY",
+  // The candidate content was flagged for recitation reasons.
   RECITATION: "RECITATION",
-  OTHER: "OTHER"
+  // The candidate content was flagged for using an unsupported language.
+  LANGUAGE: "LANGUAGE",
+  // Token generation stopped because the content contains forbidden terms.
+  BLOCKLIST: "BLOCKLIST",
+  // Token generation stopped for potentially containing prohibited content.
+  PROHIBITED_CONTENT: "PROHIBITED_CONTENT",
+  // Token generation stopped because the content potentially contains Sensitive Personally Identifiable Information (SPII).
+  SPII: "SPII",
+  // The function call generated by the model is invalid.
+  MALFORMED_FUNCTION_CALL: "MALFORMED_FUNCTION_CALL",
+  // Unknown reason.
+  OTHER: "OTHER",
 });
+
+const RpcTask = Object.freeze({
+  UPLOAD: "upload",
+  LIST: "list",
+  GET: "get",
+  DELETE: "delete",
+  UPDATE: "update",
+  CREATE: "create",
+})
 
 const VALID_PART_FIELDS = [
   "text",
   "inlineData",
   "functionCall",
   "functionResponse",
+  "executableCode",
+  "codeExecutionResult",
 ];
 
 const VALID_PARTS_PER_ROLE = Object.freeze({
   user: ["text", "inlineData"],
   function: ["functionResponse"],
-  model: ["text", "functionCall"],
+  model: ["text", "functionCall", "executableCode", "codeExecutionResult"],
+  // System instructions shouldn't be in history anyway.
+  system: ["text"],
 });
 
-const VALID_PREVIOUS_CONTENT_ROLES = Object.freeze({
-  user: ["model"],
-  function: ["model"],
-  model: ["user", "function"],
-});
+/**
+ * Basic error type for this SDK.
+ * @public
+ */
+class GoogleGenerativeAIError extends Error {
+  constructor(message) {
+    super(`[GoogleGenerativeAI Error]: ${message}`)
+  }
+}
 
+/**
+ * Errors in the contents of a response from the model. This includes parsing
+ * errors, or responses including a safety block reason.
+ * @public
+ */
+class GoogleGenerativeAIResponseError extends GoogleGenerativeAIError {
+  constructor(message, response) {
+    super(message)
+    this.response = response
+  }
+}
+
+/**
+ * Error class covering HTTP errors when calling the server. Includes HTTP
+ * status, statusText, and optional details, if provided in the server response.
+ * @public
+ */
+class GoogleGenerativeAIFetchError extends GoogleGenerativeAIError {
+  constructor(message, status, statusText, errorDetails) {
+    super(message)
+    this.status = status
+    this.statusText = statusText
+    this.errorDetails = errorDetails
+  }
+}
+
+/**
+ * Errors in the contents of a request originating from user input.
+ * @public
+ */
+class GoogleGenerativeAIRequestInputError extends GoogleGenerativeAIError { }
 
 class RequestUrl {
   constructor(model, task, auth, stream = false, requestOptions) {
@@ -737,17 +1086,15 @@ class RequestUrl {
   }
   toString() {
     let url = '';
-    const apiVersion = this.requestOptions?.apiVersion || DEFAULT_API_VERSION;
+    let apiVersion = this.requestOptions?.apiVersion || DEFAULT_API_VERSION_VERTEX;
 
     if (this._auth.region && this._auth.project_id) {
       const replacementMap = { REGION: this._auth.region, PROJECT_ID: this._auth.project_id, apiVersion: apiVersion }
       url = BASE_URL_VERTEX.replace(/\{(\w+)\}/g, (match, key) => replacementMap[key] || match) + `/${this.model}:${this.task}`;
     } else {
+      apiVersion = this.requestOptions?.apiVersion || DEFAULT_API_VERSION_STUDIO;
       url = `${BASE_URL_STUDIO}/${apiVersion}/${this.model}:${this.task}`
     }
-    // if (this.stream) {
-    //   url += "?alt=sse"
-    // }
     return url
   }
 }
@@ -846,7 +1193,8 @@ class _FunctionObject {
     }
 
     this.addParameters = function (params) {
-      parameters = params;
+      properties = params?.properties;
+      required = params?.required || []
       return this;
     }
 
@@ -865,25 +1213,81 @@ class _FunctionObject {
     }
 
     this.toJSON = function () {
-      const jsonArgs = {
+      return {
         name: name,
         description: description,
+        parameters: {
+          type: "object",
+          properties: properties,
+          required: required
+        },
         argumentsInRightOrder: argumentsInRightOrder,
         endingFunction: endingFunction,
         onlyArgs: onlyArgs
       };
-      if (parameters.type) {
-        jsonArgs.parameters = parameters
-      } else {
-        jsonArgs.parameters = {
-          type: "OBJECT",
-          properties: properties,
-          required: required,
-          //nullable: false
-        }
-      }
-      return jsonArgs;
     }
   }
 }
 var FunctionObject = _FunctionObject;
+
+class ServerRequestUrl {
+  constructor(task, auth, requestOptions) { // Take auth object
+    this.task = task;
+    this._auth = auth; // Store auth object
+    this.requestOptions = requestOptions;
+  }
+
+  appendPath(path) {
+    this._url += `/${path}`;
+  }
+
+  appendParam(key, value) {
+    const separator = url.includes('?') ? '&' : '?';
+    this._url = `${url}${separator}${key}=${value}`
+  }
+
+  toString() {
+    return this._url.toString();
+  }
+}
+
+function makeRequest_(url, fetchOptions, fetchFn = UrlFetchApp.fetch) {
+  const maxRetries = 5;
+  let retries = 0;
+  let success = false;
+  fetchOptions.muteHttpExceptions = true;
+
+  let response;
+  while (retries < maxRetries && !success) {
+    response = fetchFn(url, fetchOptions);
+    let responseCode = response.getResponseCode();
+
+    if (responseCode === 200) {
+      response = JSON.parse(response.getContentText());
+      success = true;
+    } else if ([401, 403].includes(responseCode) && this._auth?.type === 'service_account') {
+      // Refresh access token for 401/403 errors with service account.
+      this._credentialsForVertexAI();
+      fetchOptions.headers['Authorization'] = 'Bearer ' + this._credentialsForVertexAI().accessToken;
+      retries++;
+    } else if (responseCode === 429) {
+      let delay = Math.pow(2, retries) * 1000;
+      console.warn(`Rate limit reached, retrying in ${delay / 1000} seconds.`);
+      Utilities.sleep(delay);
+      retries++;
+    } else if (responseCode >= 500) {
+      let delay = Math.pow(2, retries) * 1000;
+      console.warn(`Server error ${responseCode}, retrying in ${delay / 1000} seconds.`);
+      Utilities.sleep(delay);
+      retries++;
+    } else {
+      console.error(`Request failed with code ${responseCode} - ${response.getContentText()}`);
+      throw new Error(`Request failed with code ${responseCode}`); // Throw an error to stop execution.
+    }
+  }
+
+  if (!success) {
+    throw new Error(`Failed after ${retries} retries.`);
+  }
+  return response;
+}

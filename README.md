@@ -1,33 +1,65 @@
 # GeminiApp Google Apps Script Library Documentation
 
-The GeminiApp is a library that allows integration to Google's Gemini API in your Google Apps Script projects. It allows for multi-modal prompts, structured conversations and function calling.
+The GeminiApp is a comprehensive Google Apps Script library that allows integration with Google's Gemini AI models. It lets developers create sophisticated AI-powered applications directly within Google Workspace, supporting multi-modal prompts (text, images, and PDFs), structured conversations, function calling, code execution, and fine-grained control over content generation, including JSON formatting and system instructions. The library also provides advanced token management, including token counting and content caching to optimize API usage and costs.
 
 > **Google Cloud Next '24 Demo**: For a complete personalised mail merge demo visit [Exploring Gemini API Function Calling with Google Apps Script](https://medium.com/cts-technologies/genai-for-google-workspace-exploring-gemini-api-function-calling-with-google-apps-script-part-3-028785dafe3b)
 
 ## Features
 
-* **Prototyping to Production**: Seamlessly transition from an API key with Google AI Studio to cloud deployment with a service account in Vertex AI, you only have to change your initialisation configuration.
-* **Chat and Content Creation**: Utilize the same Google examples/methods as used in the Google JavaScript SDK, with the added features of error handling and exponential backoff
-* **Function Calling**: Easily manage function declarations, parameter passing, and response orchestration. As illustrated in the repo documentation helper methods make it easy for your to declare and add functions to your calls to Gemini
+* **Core Functionality & Flexibility (Original):**
+    *   **Prototyping to Production**: Seamlessly transition from an API key with Google AI Studio to cloud deployment with a service account in Vertex AI. You only need to change your initialisation configuration.
+    *   **Chat and Content Creation**: Utilise the same Google examples/methods as used in the Google JavaScript SDK, with the added features of error handling and exponential backoff.
+    *   **Function Calling**: Easily manage function declarations, parameter passing, and response orchestration. Helper methods simplify the process of declaring and adding functions to your calls to Gemini.
+
+*   **Enhanced Functionality & Control (New):**
+    *   **Code Execution:** Generate and execute code directly within your prompts using the `gemini-2.0-flash-exp` model. This allows the model to perform calculations and programmatic logic directly within the API call.
+    *   **JSON-Controlled Generation:** Generate content in JSON format by providing a schema or having the model infer the schema from your prompt. This allows for structured outputs tailored to your application's needs.
+    *   **System Instructions:** Guide the model's behavior and persona by providing system instructions during the initialization of the `GenerativeModel`.
+
+*   **Improved Token Management & Efficiency (New):**
+    *   **Token Management:** Count tokens in prompts, chat histories, and responses, including cached content, giving you granular control over your API usage and costs.
+    *   **Caching:** Improve efficiency and reduce token usage by caching responses from PDF content.  This lets you process the same document multiple times without incurring the full token cost each time.
+
+*   **Multimodal Input (Expanded):**
+    *   **Multimodal Input**: Process text, images, and **PDF** files to generate rich, contextual responses. PDF support is a new feature allowing you to easily process document content.
 
 > **Acknowledgement** - this library is based on [ChatGPTApp](https://github.com/scriptit-fr/ChatGPTApp) by Guillemine Allavena and Romain Vialard at [Scriptit](https://www.scriptit.fr/) and the [Google AI JavaScript SDK](https://github.com/google/generative-ai-js/) by Google.
 
 ## Table of Contents
 
-* [Setup](#setup)
-* [Implement Common Use Cases](#implement-common-use-cases)
-  * [Generate text from text-only input](#generate-text-from-text-only-input)
-  * [Generate text from text-and-image input (multimodal)](#generate-text-from-text-and-image-input-multimodal)
-  * [Build multi-turn conversations (chat)](#build-multi-turn-conversations-chat)
-  * [Build multi-turn conversations (chat) with function calling](#build-multi-turn-conversations-chat-with-function-calling)
-* [Options to control content generation](#options-to-control-content-generation)
-* [Function Calling with GeminiApp](#function-calling-with-geminiapp)
+<!-- TOC start -->
+
+   * [Setup](#setup)
+      + [Setup Options](#setup-options)
+         - [Option 1 - Google AI Studio API Key (ideal for prototyping)](#option-1-google-ai-studio-api-key-ideal-for-prototyping)
+         - [Option 2 - Vertex AI Cloud Platform project - scoped user account (prototyping/production)](#option-2-vertex-ai-cloud-platform-project-scoped-user-account-prototypingproduction)
+         - [Option 3 - Vertex AI Cloud Platform project - Service Account (prototyping/production)](#option-3-vertex-ai-cloud-platform-project-service-account-prototypingproduction)
+      + [Implement Common Use Cases](#implement-common-use-cases)
+         - [Generate text from text-only input](#generate-text-from-text-only-input)
+         - [Generate text from text-and-image input (multimodal)](#generate-text-from-text-and-image-input-multimodal)
+         - [Generate text from text-and-PDF input (multimodal)](#generate-text-from-text-and-pdf-input-multimodal)
+         - [Build multi-turn conversations (chat)](#build-multi-turn-conversations-chat)
+         - [Build multi-turn conversations (chat) with function calling](#build-multi-turn-conversations-chat-with-function-calling)
+         - [Generate and execute code](#generate-and-execute-code)
+         - [JSON-Controlled Generation](#json-controlled-generation)
+            * [JSON-Controlled Generation with Schema](#json-controlled-generation-with-schema)
+            * [JSON-Controlled Generation with Inferred Schema](#json-controlled-generation-with-inferred-schema)
+         - [Process a PDF with Caching](#process-a-pdf-with-caching)
+         - [Configure model parameters](#configure-model-parameters)
+         - [Use safety settings](#use-safety-settings)
+      + [Function Calling with GeminiApp](#function-calling-with-geminiapp)
+   * [Reference](#reference)
+      + [Function Object](#function-object)
+
+<!-- TOC end -->
 
 ## Setup
 
 > **Important:** This library is designed for Google AI Studio and Vertex AI Gemini API. Latest product information is included on the [Vertex AI Gemini API documentation page](https://cloud.google.com/vertex-ai/docs/generative-ai/model-reference/gemini).
 
-### Setup
+### Setup Options
+
+> **Alias Support**: To make it easier to transition from Google's official examples, the library now supports initialization using both `new GeminiApp()` and `new GoogleGenerativeAI()`. You can use either constructor to create a GeminiApp instance.
 
 #### Option 1 - Google AI Studio API Key (ideal for prototyping)
 > **Important** Google AI Studio is currently available in 180+ countries, check out the [documentation to learn more](https://ai.google.dev/available_regions). Google AI Studio must only be used for prototyping with generative models. If you're not in one of these countries or territories available for Google AI Studio use Gemini Pro in Vertex AI (Option 2 & 3).
@@ -91,24 +123,25 @@ const genAI = new GeminiApp({
   region: YOUR_PROJECT_LOCATION,
   ...parsedCredentials
 });
-
 ```
+
 ### Implement Common Use Cases
 
-The following common use cases have been adapted from [Get started with the Gemini API in web apps](https://ai.google.dev/tutorials/get_started_web) and have been included here under the [Creative Commons Attribution 4.0 License](https://creativecommons.org/licenses/by/4.0/) (CC-BY Google), and code samples are licensed under the [Apache 2.0 License](https://www.apache.org/licenses/LICENSE-2.0)
+The following common use cases have been adapted and modified from the [Google Gemini AI JavaScript SDK samples](https://github.com/google-gemini/generative-ai-js/tree/main/samples) and are included here under the [Apache 2.0 License](https://www.apache.org/licenses/LICENSE-2.0). These examples demonstrate how to use the GeminiApp library for text generation, chat, code execution, multimodal interactions, JSON-controlled generation, and content caching.
+
+**Disclaimer:** For the latest model capabilities and recommendations, please visit [Google AI Studio Models Overview](https://ai.google.dev/gemini-api/docs/models/gemini) and [Vertex AI Models](https://cloud.google.com/vertex-ai/generative-ai/docs/learn/models) depending on which setup you are using. Also, be aware that in certain situations (e.g., when using code execution with Vertex AI), you may need to specify the `apiVersion` as `v1beta`. Always refer to these resources for the most up-to-date information on model selection and API usage.
 
 #### Generate text from text-only input
 
-When the prompt input includes only text, use the gemini-pro model with the generateContent method to generate text output:
+This example demonstrates how to generate text output when your prompt input contains only text.
 
 ```javascript
 const genAI = new GeminiApp(YOUR_CONFIG);
 
 async function runTextOnly() {
-  // For text-only input, use the gemini-pro model
-  const model = genAI.getGenerativeModel({ model: "gemini-pro" });
+  const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
-  const prompt = "Write a story about a magic backpack."
+  const prompt = "Write a story about a magic backpack.";
 
   const result = await model.generateContent(prompt);
   const response = await result.response;
@@ -118,7 +151,8 @@ async function runTextOnly() {
 ```
 
 #### Generate text from text-and-image input (multimodal)
-Gemini provides a multimodal model (gemini-pro-vision), so you can input both text and images. Make sure to review the image requirements for input. When the prompt input includes both text and images, use the `gemini-pro-vision` model with the generateContent method to generate text output:
+
+This example shows how to generate text output when your prompt input includes both text and images.
 
 ```javascript
 const genAI = new GeminiApp(YOUR_CONFIG);
@@ -138,8 +172,7 @@ function fileToGenerativePart(id) {
 }
 
 async function runTextAndImages() {
-  // For text-and-images input (multimodal), use the gemini-pro-vision model
-  const model = genAI.getGenerativeModel({ model: "gemini-pro-vision" });
+  const model = genAI.getGenerativeModel({ model: "gemini-1.5-pro-002" });
 
   const prompt = "What's different between these pictures?";
 
@@ -155,25 +188,52 @@ async function runTextAndImages() {
 }
 ```
 
+#### Generate text from text-and-PDF input (multimodal)
+
+This example demonstrates how to process PDF files and generate text output when the prompt input includes both text and a PDF document.
+
+```javascript
+const genAI = new GeminiApp(YOUR_CONFIG);
+
+// Converts a Google Drive file ID to a GoogleGenerativeAI.Part object
+function fileToGenerativePart(id) {
+  const file = DriveApp.getFileById(id);
+  const blob = file.getBlob();
+  const base64EncodedData = Utilities.base64Encode(blob.getBytes());
+
+  return {
+    inlineData: {
+      data: base64EncodedData,
+      mimeType: file.getMimeType()
+    },
+  };
+}
+
+async function runPDF() {
+  const model = genAI.getGenerativeModel({ model: "gemini-1.5-pro-002" });
+
+  const prompt = "What does the pdf file says?";
+
+  const imageParts = [
+    fileToGenerativePart("1oamLVEo47-SFqsg6ZV-Pl3xQg0iuho7nMOfOqVl8RdDFyH_gWe8"),
+  ];
+
+  const result = await model.generateContent([prompt, ...imageParts]);
+  const response = await result.response;
+  const text = response.text();
+  console.log(text);
+}
+```
+
 #### Build multi-turn conversations (chat)
-Using Gemini, you can build freeform conversations across multiple turns. The library simplifies the process by managing the state of the conversation, so unlike with generateContent, you don't have to store the conversation history yourself.
 
-To build a multi-turn conversation (like chat), use the `gemini-pro` model, and initialize the chat by calling `startChat()`. Then use `sendMessage()` to send a new user message, which will also append the message and the response to the chat history.
-
-There are two possible options for role associated with the content in a conversation:
-
-* `user`: the role which provides the prompts. This value is the default for `sendMessage` calls, and the function will throw an exception if a different role is passed.
-
-* `model`: the role which provides the responses. This role can be used when calling `startChat()` with existing `history`.
-
-> **Note**: The `gemini-pro-vision` model (for text-and-image input) is not yet optimized for multi-turn conversations. Make sure to use `gemini-pro` and text-only input for chat use cases.
+This example shows how to build freeform, multi-turn conversations (chat) while the state of the conversation is managed by the library.
 
 ```javascript
 const genAI = new GeminiApp(YOUR_CONFIG);
 
 async function runMultiTurnChat() {
-  // For text-only input, use the gemini-pro model
-  const model = genAI.getGenerativeModel({ model: "gemini-pro" });
+  const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
   const chat = model.startChat({
     history: [
@@ -206,7 +266,8 @@ async function runMultiTurnChat() {
 ```
 
 #### Build multi-turn conversations (chat) with function calling
-You can provide Gemini models with descriptions of functions. The model may ask you to call a function and send back the result to help the model handle your query.
+
+This example illustrates how to enable function calling in multi-turn conversations, allowing the model to request the execution of specific functions.
 
 ```javascript
 /**
@@ -220,11 +281,10 @@ function double(input) {
 const genAI = new GeminiApp(YOUR_CONFIG)
 
 async function basicFunctionCalling() {
-  // Important: If using a Google AI Studio key the apiVersion needs to be declared as v1beta
-  const model = genAI.getGenerativeModel({ model: "gemini-pro" }, { apiVersion: 'v1beta' });
+  const model = genAI.getGenerativeModel({ model: "gemini-pro" }, { apiVersion: 'v1'});
 
   const doubleFunction = model.newFunction()
-    .setName("double")
+    .setName("double_")
     .setDescription("Multiplies an input value by 2.")
     .addParameter("input", "NUMBER", "Input The number to double")
   
@@ -236,65 +296,199 @@ async function basicFunctionCalling() {
   const text = response.text();
   console.log(text);
 
+  console.log(JSON.stringify(chat.getHistory()))
 }
 ```
-If you can use `chat.getHistory()` see the sequence of events:
 
-```javscript
+If you use `chat.getHistory()`, you can see the sequence of events:
+
+```javascript
 console.log(JSON.stringify(chat.getHistory()))
+```
 
-// output
-[
-  {
-    "role": "user",
-    "parts": [
-      {
-        "text": "I have 7 cats. How many cats would I have if I wanted to double the number?"
-      }
-    ]
-  },
-  [
+#### Generate and execute code
+
+This example demonstrates how to generate and execute code directly within the model, useful for tasks that require calculations or programmatic logic.
+
+```javascript
+const genAI = new GeminiApp(YOUR_CONFIG);
+
+async function codeExecutionBasic() {
+    const model = genAI.getGenerativeModel(
     {
-      "role": "model",
+      model: "gemini-2.0-flash-exp",
+      tools: [{ codeExecution: {} }],
+    },
+    // { apiVersion: "v1beta" } // uncomment this line if you are using vertex-ai/generative-ai/docs/multimodal/code-execution
+  );
+
+    const result = await model.generateContent(
+      "What is the sum of the first 50 prime numbers? " +
+      "Generate and run code for the calculation, and make sure you get " +
+      "all 50.",
+    );
+
+    console.log(result.response.text());
+}
+
+async function codeExecutionRequestOverride() {
+    const model = genAI.getGenerativeModel(
+    {
+      model: "gemini-2.0-flash-exp",
+    },
+    // { apiVersion: "v1beta" } // uncomment this line if you are using vertex-ai/generative-ai/docs/multimodal/code-execution
+  );
+
+    const result = await model.generateContent({
+        contents: [
+            {
+                role: "user",
+                parts: [
+                    {
+                        text:
+                          "What is the sum of the first 50 prime numbers? " +
+                          "Generate and run code for the calculation, and make sure you " +
+                          "get all 50.",
+                    },
+                ],
+            },
+        ],
+        tools: [{ codeExecution: {} }],
+    });
+
+    console.log(result.response.text());
+}
+
+async function codeExecutionChat() {
+    const model = genAI.getGenerativeModel(
+    {
+      model: "gemini-2.0-flash-exp",
+      tools: [{ codeExecution: {} }],
+    },
+    // { apiVersion: "v1beta" } // uncomment this line if you are using vertex-ai/generative-ai/docs/multimodal/code-execution
+  );
+
+    const chat = model.startChat();
+
+    const result = await chat.sendMessage(
+      "What is the sum of the first 50 prime numbers? " +
+      "Generate and run code for the calculation, and make sure you get " +
+      "all 50.",
+    );
+
+    console.log(result.response.text());
+}
+```
+
+#### JSON-Controlled Generation
+
+These examples show how to instruct Gemini to generate content in JSON format, either by providing a schema or by letting Gemini infer the schema from the prompt.
+
+##### JSON-Controlled Generation with Schema
+
+This example demonstrates generating JSON output when a schema is explicitly provided.
+
+```javascript
+const genAI = new GeminiApp(YOUR_CONFIG);
+const { SchemaType } = require("@google/generative-ai");
+const schema = {
+    description: "List of recipes",
+    type: SchemaType.ARRAY,
+    items: {
+        type: SchemaType.OBJECT,
+        properties: {
+            recipeName: {
+                type: SchemaType.STRING,
+                description: "Name of the recipe",
+                nullable: false,
+            },
+        },
+        required: ["recipeName"],
+    },
+};
+
+const model = genAI.getGenerativeModel({
+    model: "gemini-1.5-pro",
+    generationConfig: {
+        responseMimeType: "application/json",
+        responseSchema: schema,
+    },
+});
+
+const result = await model.generateContent("List a few popular cookie recipes.");
+console.log(result.response.text());
+```
+
+##### JSON-Controlled Generation with Inferred Schema
+
+This example demonstrates generating JSON output by providing instructions in the prompt on what the JSON structure should be.
+
+```javascript
+const genAI = new GeminiApp(YOUR_CONFIG);
+
+const model = genAI.getGenerativeModel({
+    model: "gemini-1.5-flash",
+});
+
+const prompt = `List a few popular cookie recipes using this JSON schema:
+
+  Recipe = {'recipeName': string}
+  Return: Array<Recipe>`;
+
+const result = await model.generateContent(prompt);
+console.log(result.response.text());
+```
+
+#### Process a PDF with Caching
+
+This example demonstrates how to use the caching system to avoid processing PDF files multiple times, saving API tokens for multiple prompts against the same PDF content. This example requires you to include the [GoogleAICacheManager.js](/src/GoogleAICacheManager.js) in your Google Apps Script project.
+
+```javascript
+  const genAI = new GeminiApp(YOUR_CONFIG);
+  const inlineParts = fileToGenerativePart("YOUR_FILE_ID");
+  // Create a cache that uses the uploaded file.
+  const cacheManager = new GoogleAICacheManager(YOUR_CONFIG);
+  const cacheResult = await cacheManager.create({
+    "model": "models/gemini-1.5-flash-002",
+    "contents": [
+      {
+        "parts": [inlineParts],
+        "role": "user"
+      }
+    ],
+    "systemInstruction": {
       "parts": [
         {
-          "functionCall": {
-            "name": "double",
-            "args": {
-              "input": 7
-            }
-          }
+          "text": "You are an expert at analyzing transcripts."
         }
       ]
     },
-    {
-      "role": "function",
-      "parts": [
-        {
-          "functionResponse": {
-            "name": "double",
-            "response": {
-              "result": 14
-            }
-          }
-        }
-      ]
-    }
-  ],
-  {
-    "parts": [
-      {
-        "text": "If you wanted to double the number of cats you have, you would have 14 cats."
-      }
-    ],
-    "role": "model"
-  }
-]
+    "ttl": "300s"
+  });
+
+
+  const model = genAI.getGenerativeModelFromCachedContent(cacheResult);
+
+  const prompt = "Please give a short summary of this file.";
+
+  // Call `countTokens` to get the input token count
+  // of the combined text and file (`totalTokens`).
+  const result = await model.countTokens(prompt);
+
+  const generateResult = await model.generateContent(prompt);
+
+  // On the response for `generateContent`, use `usageMetadata`
+  // to get separate input and output token counts
+  // (`promptTokenCount` and `candidatesTokenCount`, respectively),
+  // as well as the cached content token count and the combined total
+  // token count.
+  console.log(generateResult.response.usageMetadata);
+
+  const cacheList = cacheManager.list();
+  console.log(cacheManager.get(cacheResult.name))
+
+  await cacheManager.delete(cacheResult.name);
 ```
-
-### Options to control content generation
-
-You can control content generation by configuring model parameters and by using safety settings.
 
 #### Configure model parameters
 
@@ -365,8 +559,7 @@ async function draftCodingTipsByEmail() {
     ...parsedCredentials
   });
 
-  // Important: If using a Google AI Studio key the apiVersion needs to be declared as v1beta
-  const model = genAI.getGenerativeModel({ model: "gemini-pro" }, { apiVersion: 'v1' });
+  const model = genAI.getGenerativeModel({ model: "gemini-pro" });
 
   const getContactList = model.newFunction()
     .setName("getContactList")
